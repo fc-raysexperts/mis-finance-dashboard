@@ -25,7 +25,7 @@ export const EXP_STRUCTURE = [
   { head: 'O&M Expense', subs: [
     'Module Services Expenses (O&M)', 'Security Expenses (O&M)',
   ]},
-  { head: 'Inventory', subs: ['Opening Inventories - Closing Inventories'] },
+  { head: 'Change in Inventory', subs: ['Opening Inventories - Closing Inventories'] },
   { head: 'Indirect Expense', subs: [
     'Salaries/Labour Charges and Staff Welfare', 'Finance Costs',
     'Power Purchase Commitment Charges', 'Brokerage and Commission',

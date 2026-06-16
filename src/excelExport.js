@@ -15,19 +15,21 @@ function buildMonthlyPLSheet(revData, expData, visMo, fyLabel) {
 
   const totalRev = visMo.map(m => allRevSubs.reduce((s, sub) => s + ((revData[sub] || [])[m.idx] || 0), 0));
   const totalExp = visMo.map(m => allExpSubs.reduce((s, sub) => s + ((expData[sub] || [])[m.idx] || 0), 0));
-  const finCost  = visMo.map(m => (expData['Finance Costs'] || [])[m.idx] || 0);
-  const depn     = visMo.map(m => (expData['Depreciation']  || [])[m.idx] || 0);
-  const profit   = visMo.map((_, i) => totalRev[i] - totalExp[i] + finCost[i] + depn[i]);
+  const finCost  = visMo.map(m => (expData['Finance Costs']    || [])[m.idx] || 0);
+  const taxExp   = visMo.map(m => (expData['Tax Paid Expense'] || [])[m.idx] || 0);
+  const depn     = visMo.map(m => (expData['Depreciation']     || [])[m.idx] || 0);
+  const ebitda   = visMo.map((_, i) => totalRev[i] - totalExp[i] + finCost[i] + taxExp[i] + depn[i]);
 
   const header = ['Particulars', ...moLabels, 'Total'];
   const rows = [
     [`Monthly P&L — ${fyLabel}`],
     header,
-    ['Total Revenue',             ...totalRev, totalRev.reduce((a,b)=>a+b,0)],
-    ['Total Expenses (Excl. Tax)',...totalExp, totalExp.reduce((a,b)=>a+b,0)],
-    ['Finance Cost (Interest)',   ...finCost,  finCost.reduce((a,b)=>a+b,0)],
-    ['Depreciation',              ...depn,     depn.reduce((a,b)=>a+b,0)],
-    ['Profit Before Dep & Tax',   ...profit,   profit.reduce((a,b)=>a+b,0)],
+    ['Total Revenue',               ...totalRev, totalRev.reduce((a,b)=>a+b,0)],
+    ['Total Expenses',              ...totalExp, totalExp.reduce((a,b)=>a+b,0)],
+    ['Finance Cost (Interest)',     ...finCost,  finCost.reduce((a,b)=>a+b,0)],
+    ['Tax Expenses',                ...taxExp,   taxExp.reduce((a,b)=>a+b,0)],
+    ['Depreciation & Amortization', ...depn,     depn.reduce((a,b)=>a+b,0)],
+    ['EBITDA',                      ...ebitda,   ebitda.reduce((a,b)=>a+b,0)],
   ];
   return rows;
 }
@@ -85,18 +87,20 @@ function buildPLComparisonSheet(fyDatasets, moIdx) {
     Object.keys(fd.rev.data).reduce((s, sub) => s + getVal(fd.rev.data[sub] || [], fd.rev.visMo), 0));
   const totalExpVals = fyDatasets.map(fd =>
     Object.keys(fd.exp.data).reduce((s, sub) => s + getVal(fd.exp.data[sub] || [], fd.exp.visMo), 0));
-  const finCostVals = fyDatasets.map(fd => getVal(fd.exp.data['Finance Costs'] || [], fd.exp.visMo));
-  const depnVals    = fyDatasets.map(fd => getVal(fd.exp.data['Depreciation']   || [], fd.exp.visMo));
-  const profitVals  = totalRevVals.map((r, i) => r - totalExpVals[i] + finCostVals[i] + depnVals[i]);
+  const finCostVals = fyDatasets.map(fd => getVal(fd.exp.data['Finance Costs']    || [], fd.exp.visMo));
+  const taxExpVals  = fyDatasets.map(fd => getVal(fd.exp.data['Tax Paid Expense'] || [], fd.exp.visMo));
+  const depnVals    = fyDatasets.map(fd => getVal(fd.exp.data['Depreciation']      || [], fd.exp.visMo));
+  const ebitdaVals  = totalRevVals.map((r, i) => r - totalExpVals[i] + finCostVals[i] + taxExpVals[i] + depnVals[i]);
 
   return [
     ['P&L Comparison'],
     ['Particulars', ...fyLabels, 'Total'],
-    ['Total Revenue',             ...totalRevVals, totalRevVals.reduce((a,b)=>a+b,0)],
-    ['Total Expenses (Excl. Tax)',...totalExpVals, totalExpVals.reduce((a,b)=>a+b,0)],
-    ['Finance Cost (Interest)',   ...finCostVals,  finCostVals.reduce((a,b)=>a+b,0)],
-    ['Depreciation',              ...depnVals,     depnVals.reduce((a,b)=>a+b,0)],
-    ['Profit Before Dep & Tax',   ...profitVals,   profitVals.reduce((a,b)=>a+b,0)],
+    ['Total Revenue',               ...totalRevVals, totalRevVals.reduce((a,b)=>a+b,0)],
+    ['Total Expenses',              ...totalExpVals, totalExpVals.reduce((a,b)=>a+b,0)],
+    ['Finance Cost (Interest)',     ...finCostVals,  finCostVals.reduce((a,b)=>a+b,0)],
+    ['Tax Expenses',                ...taxExpVals,   taxExpVals.reduce((a,b)=>a+b,0)],
+    ['Depreciation & Amortization', ...depnVals,     depnVals.reduce((a,b)=>a+b,0)],
+    ['EBITDA',                      ...ebitdaVals,   ebitdaVals.reduce((a,b)=>a+b,0)],
   ];
 }
 

@@ -11,16 +11,18 @@ function PLRowsInner({ fyDatasets, moIdx }) {
     Object.keys(fd.rev.data).reduce((s, sub) => s + getVal(fd.rev.data[sub] || [], fd.rev.visMo), 0));
   const totalExpVals = fyDatasets.map(fd =>
     Object.keys(fd.exp.data).reduce((s, sub) => s + getVal(fd.exp.data[sub] || [], fd.exp.visMo), 0));
-  const finCostVals = fyDatasets.map(fd => getVal(fd.exp.data['Finance Costs'] || [], fd.exp.visMo));
-  const depnVals    = fyDatasets.map(fd => getVal(fd.exp.data['Depreciation']   || [], fd.exp.visMo));
-  const profitVals  = totalRevVals.map((r, i) => r - totalExpVals[i] + finCostVals[i] + depnVals[i]);
+  const finCostVals = fyDatasets.map(fd => getVal(fd.exp.data['Finance Costs']    || [], fd.exp.visMo));
+  const taxExpVals  = fyDatasets.map(fd => getVal(fd.exp.data['Tax Paid Expense'] || [], fd.exp.visMo));
+  const depnVals    = fyDatasets.map(fd => getVal(fd.exp.data['Depreciation']      || [], fd.exp.visMo));
+  const ebitdaVals  = totalRevVals.map((r, i) => r - totalExpVals[i] + finCostVals[i] + taxExpVals[i] + depnVals[i]);
 
   const plRows = [
-    { label: 'Total Revenue',              vals: totalRevVals, cls: 'pl-rev' },
-    { label: 'Total Expenses (Excl. Tax)', vals: totalExpVals, cls: 'pl-exp' },
-    { label: 'Finance Cost (Interest)',    vals: finCostVals,  cls: 'pl-sub' },
-    { label: 'Depreciation',              vals: depnVals,     cls: 'pl-sub' },
-    { label: 'Profit Before Dep & Tax',   vals: profitVals,   cls: 'pl-profit', isProfit: true },
+    { label: 'Total Revenue',               vals: totalRevVals, cls: 'pl-rev' },
+    { label: 'Total Expenses',              vals: totalExpVals, cls: 'pl-exp' },
+    { label: 'Finance Cost (Interest)',     vals: finCostVals,  cls: 'pl-sub' },
+    { label: 'Tax Expenses',               vals: taxExpVals,   cls: 'pl-sub' },
+    { label: 'Depreciation & Amortization',vals: depnVals,     cls: 'pl-sub' },
+    { label: 'EBITDA',                     vals: ebitdaVals,   cls: 'pl-profit', isProfit: true },
   ];
 
   return (
