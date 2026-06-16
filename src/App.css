@@ -1,0 +1,300 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  background: #f0f4fa;
+  color: #1a1a2e;
+  min-height: 100vh;
+}
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.app-header {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 12px rgba(37,99,235,.35);
+}
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-icon { font-size: 26px; line-height: 1; filter: drop-shadow(0 1px 3px rgba(0,0,0,.3)); }
+.header-text { display: flex; flex-direction: column; gap: 2px; }
+.app-title { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: .01em; }
+.app-sub   { font-size: 11px; color: rgba(255,255,255,.7); font-weight: 400; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.fy-seg { display: flex; background: rgba(255,255,255,.15); border-radius: 10px; padding: 3px; gap: 2px; }
+.fy-btn {
+  padding: 5px 14px; border: none; border-radius: 7px; cursor: pointer;
+  font-size: 12px; font-weight: 600; background: transparent; color: rgba(255,255,255,.75);
+  transition: all .18s;
+}
+.fy-btn.active { background: #fff; color: #1e3a5f; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+.fy-btn:hover:not(.active) { background: rgba(255,255,255,.25); color: #fff; }
+
+.refresh-btn {
+  display: flex; align-items: center; gap: 5px; padding: 6px 14px;
+  border: 1.5px solid rgba(255,255,255,.4); border-radius: 8px;
+  background: rgba(255,255,255,.12); backdrop-filter: blur(4px);
+  cursor: pointer; font-size: 12px; color: #fff; font-weight: 500;
+  transition: all .18s; white-space: nowrap;
+}
+.refresh-btn:hover:not(:disabled) { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.7); }
+.refresh-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.refresh-icon { font-size: 15px; display: inline-block; }
+.refresh-btn.loading .refresh-icon { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
+.tab-nav {
+  background: #fff;
+  border-bottom: 2px solid #e2e8f0;
+  padding: 0 20px;
+  display: flex;
+  gap: 2px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.tab-btn {
+  padding: 11px 18px; border: none; background: transparent; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: #64748b;
+  border-bottom: 3px solid transparent; margin-bottom: -2px;
+  transition: all .18s; border-radius: 4px 4px 0 0;
+}
+.tab-btn:hover { color: #1e40af; background: #f0f4ff; }
+.tab-btn.active { color: #1e40af; border-bottom-color: #2563eb; font-weight: 700; background: #f0f4ff; }
+
+/* ── Main content ───────────────────────────────────────────────────────── */
+.app-main { flex: 1; padding: 16px 20px; }
+.tab-content { display: flex; flex-direction: column; gap: 20px; }
+
+/* ── Table wrapper ──────────────────────────────────────────────────────── */
+/* Regular tabs: frozen header + frozen footer, scrollable body */
+.tbl-wrap {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  width: 100%;
+  overflow-x: auto;
+  box-shadow: 0 2px 12px rgba(0,0,0,.07);
+  position: relative;
+}
+
+/* Annual summary: NO max-height, no internal scroll — page scrolls */
+.tbl-wrap.no-scroll {
+  overflow: visible;
+  max-height: none;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 700px;
+}
+
+/* ── Frozen header row ──────────────────────────────────────────────────── */
+thead tr {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+}
+thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+th {
+  padding: 9px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  border-bottom: 2px solid rgba(255,255,255,.2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+th.col-head    { text-align: left; width: 9%; }
+th.col-sub     { text-align: left; width: 16%; }
+th.col-num     { text-align: right; width: 6.5%; }
+th.col-total-hd { background: rgba(255,220,50,.25); color: #ffe87c; width: 7.5%; font-weight: 800; }
+
+/* ── Table body cells ───────────────────────────────────────────────────── */
+td {
+  padding: 6px 7px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 12px;
+  color: #1e293b;
+  overflow: hidden;
+  white-space: nowrap;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f8faff !important; }
+
+td.col-head {
+  font-size: 11px; font-weight: 700; color: #1e40af;
+  text-align: left; vertical-align: middle;
+  white-space: normal; word-break: break-word;
+  background: #f0f4ff;
+  border-right: 2px solid #bfdbfe;
+  padding-left: 10px;
+}
+td.col-sub {
+  text-align: left;
+  white-space: normal; word-break: break-word;
+  font-size: 12px; color: #334155;
+  line-height: 1.4;
+}
+td.col-num  { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+td.col-total-val { font-weight: 700; background: #fefce8; color: #92400e; }
+
+.neg { color: #dc2626; font-weight: 500; }
+.profit-pos { color: #16a34a; font-weight: 700; }
+.profit-neg { color: #dc2626; font-weight: 700; }
+
+/* ── Total row in Revenue/Expenses tabs — light blue, black, no hover fade ── */
+.row-fin-total td {
+  font-weight: 800;
+  font-size: 12px;
+  background: #dbeafe !important;
+  color: #000 !important;
+  border-top: 2px solid #93c5fd;
+  border-bottom: none;
+}
+.row-fin-total td.col-head {
+  background: #bfdbfe !important;
+  color: #000 !important;
+  border-right: 2px solid #93c5fd;
+}
+.row-fin-total td.col-total-val {
+  background: #bfdbfe !important;
+  color: #000 !important;
+  font-weight: 800;
+}
+.row-fin-total:hover td { background: #dbeafe !important; }
+.row-fin-total:hover td.col-head { background: #bfdbfe !important; }
+.row-fin-total:hover td.col-total-val { background: #bfdbfe !important; }
+
+/* ── Heading group separator line ───────────────────────────────────────── */
+tr.head-group-end td {
+  border-bottom: 2px solid #93c5fd !important;
+}
+
+/* ── Monthly P&L rows ───────────────────────────────────────────────────── */
+.pl-rev td {
+  font-weight: 600; font-size: 13px;
+  background: linear-gradient(90deg, #f0fdf4, #dcfce7);
+  color: #14532d;
+  border-bottom: 1px solid #bbf7d0;
+}
+.pl-exp td {
+  font-weight: 600; font-size: 13px;
+  background: linear-gradient(90deg, #fff7ed, #ffedd5);
+  color: #7c2d12;
+  border-bottom: 1px solid #fed7aa;
+}
+.pl-sub td { color: #64748b; font-size: 12px; background: #fafafa; }
+.pl-profit td {
+  font-weight: 800; font-size: 14px;
+  background: linear-gradient(90deg, #dbeafe, #e0e7ff);
+  border-top: 2px solid #93c5fd; border-bottom: none;
+  color: #1e3a5f;
+}
+
+/* ── Annual Summary ─────────────────────────────────────────────────────── */
+.annual-wrap { display: flex; flex-direction: column; gap: 8px; }
+.annual-title {
+  font-size: 15px; font-weight: 700; color: #1e3a5f;
+  padding: 4px 0 2px 10px;
+  border-left: 4px solid #2563eb;
+}
+.annual-section-hd td {
+  background: linear-gradient(90deg, #1e3a5f, #2563eb);
+  color: #fff; font-weight: 800; font-size: 11px;
+  letter-spacing: .08em; padding: 6px 10px;
+  border: none;
+}
+.annual-head-row td { font-size: 12px; }
+.annual-head-label { color: #334155; font-weight: 500; padding-left: 18px !important; }
+.annual-total-row td {
+  font-weight: 700; font-size: 13px;
+  background: linear-gradient(90deg, #f0f9ff, #e0f2fe);
+  color: #0c4a6e;
+  border-top: 1.5px solid #7dd3fc;
+}
+.annual-profit-row td {
+  font-weight: 800; font-size: 13px;
+  background: linear-gradient(90deg, #dbeafe, #e0e7ff);
+  color: #1e3a5f;
+  border-top: 2px solid #93c5fd;
+}
+
+/* ── Comparison tab ─────────────────────────────────────────────────────── */
+.cmp-header-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #fff; border-radius: 10px; padding: 12px 18px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.07);
+  border: 1px solid #e2e8f0;
+}
+.cmp-main-title { font-size: 16px; font-weight: 700; color: #1e3a5f; }
+.cmp-selector-wrap { display: flex; align-items: center; gap: 8px; }
+.cmp-selector-label { font-size: 13px; font-weight: 600; color: #64748b; }
+.mo-select {
+  padding: 7px 12px; border: 1.5px solid #93c5fd; border-radius: 8px;
+  background: #f0f4ff; font-size: 13px; font-weight: 600;
+  color: #1e3a5f; cursor: pointer; outline: none;
+  transition: border-color .15s;
+}
+.mo-select:focus { border-color: #2563eb; }
+
+.cmp-section-hd td {
+  background: linear-gradient(90deg, #1e3a5f 0%, #2563eb 60%, #7c3aed 100%);
+  color: #fff; font-weight: 800; font-size: 11px;
+  letter-spacing: .1em; padding: 7px 10px;
+  border: none;
+}
+
+/* ── Error banner ───────────────────────────────────────────────────────── */
+.error-banner {
+  background: #fef9c3; color: #854d0e; padding: 8px 20px;
+  font-size: 12px; border-bottom: 1px solid #fde047;
+  font-weight: 500;
+}
+
+/* ── No-data ────────────────────────────────────────────────────────────── */
+.no-data { padding: 32px; color: #94a3b8; text-align: center; font-size: 14px; }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.app-footer {
+  padding: 10px 20px; font-size: 11px; color: #94a3b8;
+  background: #fff; border-top: 1px solid #e2e8f0;
+  text-align: center; letter-spacing: .02em;
+}
+
+/* ── Download button ────────────────────────────────────────────────────── */
+.download-btn {
+  display: flex; align-items: center; gap: 5px; padding: 6px 14px;
+  border: 1.5px solid rgba(255,255,255,.4); border-radius: 8px;
+  background: rgba(251,191,36,.2); backdrop-filter: blur(4px);
+  cursor: pointer; font-size: 12px; color: #fef08a; font-weight: 600;
+  transition: all .18s; white-space: nowrap;
+}
+.download-btn:hover { background: rgba(251,191,36,.35); border-color: #fbbf24; }
+
+/* ── Section total row (in Comparison) ─────────────────────────────────── */
+.row-section-total td {
+  font-weight: 700; font-size: 12px;
+  background: #dbeafe; color: #1e3a5f;
+  border-top: 1.5px solid #93c5fd;
+}
+.row-section-total:hover td { background: #bfdbfe !important; }
+.row-section-total td.col-total-val { background: #fef9c3 !important; color: #92400e !important; }
+
+
