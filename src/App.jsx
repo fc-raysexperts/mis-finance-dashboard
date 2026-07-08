@@ -106,7 +106,7 @@ export default function App() {
               <span className="app-sub">Rays Power Experts</span>
             </div>
           </div>
-          <div className="header-right">
+          <div className="header-center">
             <div className="fy-seg">
               {FY_CONFIG.map(f => (
                 <button key={f.id} className={`fy-btn${curFY === f.id ? ' active' : ''}`}
@@ -120,6 +120,10 @@ export default function App() {
               onClick={doRefresh} disabled={loading}>
               <span className="refresh-icon">↻</span>{refreshLabel}
             </button>
+          </div>
+          <div className="header-right">
+            <span className="dev-credit-name">Developed by: ASHISH KASWAN</span>
+            <span className="dev-credit-role">Business Analyst, Finance Control</span>
           </div>
         </header>
 

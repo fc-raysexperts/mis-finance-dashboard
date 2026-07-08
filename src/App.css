@@ -26,12 +26,21 @@ body {
   gap: 10px;
   box-shadow: 0 2px 12px rgba(37,99,235,.35);
 }
-.header-left { display: flex; align-items: center; gap: 10px; }
+.header-left { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .header-icon { font-size: 26px; line-height: 1; filter: drop-shadow(0 1px 3px rgba(0,0,0,.3)); }
 .header-text { display: flex; flex-direction: column; gap: 2px; }
 .app-title { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: .01em; }
 .app-sub   { font-size: 11px; color: rgba(255,255,255,.7); font-weight: 400; }
-.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.header-center {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  flex: 1 1 auto; justify-content: center;
+}
+.header-right {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 2px; flex: 0 0 auto; text-align: right;
+}
+.dev-credit-name { font-size: 12px; font-weight: 700; color: #fff; }
+.dev-credit-role { font-size: 10.5px; color: rgba(255,255,255,.7); }
 
 .fy-seg { display: flex; background: rgba(255,255,255,.15); border-radius: 10px; padding: 3px; gap: 2px; }
 .fy-btn {
