@@ -109,7 +109,7 @@ export default function Outlook({ curFY }) {
         <div className="chart-card-title">Key Financial Ratios — Strengths</div>
         <table className="investor-cmp-table">
           <thead>
-            <tr><th>Ratio</th><th>FY24</th><th>FY25</th><th>FY26</th><th>CRISIL Benchmark</th><th>Assessment</th></tr>
+            <tr><th>Ratio</th><th>FY24</th><th>FY25</th><th>FY26</th><th>STANDARD Benchmark</th><th>Assessment</th></tr>
           </thead>
           <tbody>
             {inv.keyRatios.map((r, i) => (

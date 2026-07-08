@@ -186,7 +186,7 @@ DEFAULTS.keyRatios = [
   { ratio: 'EBITDA (₹ Cr)',               fy24: '5.40',  fy25: '38.86',  fy26: '82.55', benchmark: '—',              assessment: 'Strong' },
   { ratio: 'ROCE (%)',                    fy24: '—',     fy25: '65.2%*', fy26: '~56%',  benchmark: '>20%',           assessment: 'Strong' },
   { ratio: 'ROE (% avg NW)',              fy24: '—',     fy25: '49.3%',  fy26: '61.5%', benchmark: '>15%',           assessment: 'Strong' },
-  { ratio: 'Net Cash Accruals (₹ Cr)',    fy24: '4',     fy25: '27.9',   fy26: '80.4',  benchmark: '>37 Cr (upgrade)', assessment: 'Above Trigger' },
+  { ratio: 'Net Cash Accruals (₹ Cr)',    fy24: '4',     fy25: '27.9',   fy26: '80.4',  benchmark: '>37 Cr (upgrade)', assessment: 'Healthy' },
   { ratio: 'Interest Coverage (x)',       fy24: '19.7',  fy25: '57.9',   fy26: '40.7',  benchmark: '>5.0x',          assessment: 'Very Strong' },
   { ratio: 'DSCR, approx. (x)',           fy24: '—',     fy25: '53.9*',  fy26: '~38',   benchmark: '>1.2x',          assessment: 'Very Strong' },
   { ratio: 'Total Debt / EBITDA (x)',     fy24: '<0.1',  fy25: '0.17',   fy26: '0.31',  benchmark: '<3.0x',          assessment: 'Excellent' },
