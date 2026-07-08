@@ -47,8 +47,8 @@ const DEFAULTS = {
     { title: 'Govt BESS Execution', value: '₹311 Cr',   detail: 'RVUNL + NTPC orders' },
   ],
   balanceSheet: {
-    shareholdersFunds: 165.35,
-    cash: 21.96,
+    shareholdersFunds: 200.35,
+    cash: 21.97,
     gearing: '0.14x',
     rating: 'BBB / Stable',
   },
@@ -79,7 +79,12 @@ function deepMerge(base, override) {
 export async function loadInvestorData() {
   const saved = await getRemote(REMOTE_KEY, null);
   if (!saved) return structuredClone(DEFAULTS);
-  return deepMerge(structuredClone(DEFAULTS), saved);
+  const merged = deepMerge(structuredClone(DEFAULTS), saved);
+  // keyRatios has no edit UI anywhere in the app — it must always reflect
+  // the latest code, never a stale value some other tab's Save happened
+  // to carry along in its shared blob.
+  merged.keyRatios = structuredClone(DEFAULTS.keyRatios);
+  return merged;
 }
 
 export async function saveInvestorData(data) {
@@ -95,8 +100,8 @@ const STRATEGIC_DEFAULTS = {
     pbt: 79.33, pbtYoY: '2.19x', pbtPrior: 36.17,
     pbtMargin: 19.6, pbtMarginPrior: 27.1,
     ebitda: 82.55, ebitdaMargin: 20.4, ebitdaMarginPrior: 29.1,
-    shareholdersFunds: 165.35, shareholdersFundsYoY: '2.2x', shareholdersFundsPrior: 75.05,
-    cash: 21.96, cashYoY: '27x', cashPrior: 0.81,
+    shareholdersFunds: 200.35, shareholdersFundsYoY: '2.2x', shareholdersFundsPrior: 75.05,
+    cash: 21.97, cashYoY: '27x', cashPrior: 0.81,
     gearing: '0.14x',
   },
   trajectory: {
