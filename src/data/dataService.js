@@ -1,13 +1,37 @@
 import { FY25_REV, FY25_EXP, FY26_REV, FY26_EXP } from './hardcoded.js';
 import { ALL_REV_SUBS, ALL_EXP_SUBS, getVisibleMonths, FY_CONFIG } from './structure.js';
+import { getRemote, setRemote } from './remoteStore.js';
 
 // liveCache: { 'FY27-0': {rev, exp}, 'FY27-1': {rev, exp}, ... }
 // FY25 and FY26 are 100% hardcoded — Refresh never touches them.
 // Only FY27 and future FYs are fetched live.
+// liveCache is hydrated from the shared backend (Vercel KV) on first use,
+// so every visitor sees the last-refreshed figures instantly — no one has
+// to wait for the Zoho Books API loop just to see numbers that already exist.
 let liveCache = {};
 let lastRefreshed = null;
+let hydrated = false;
+let hydratePromise = null;
+
+const LIVE_CACHE_KEY = 'live_cache_v1';
 
 export function getLastRefreshed() { return lastRefreshed; }
+
+// Fetches the cached live figures from the shared backend. Safe to call
+// multiple times — only does the network round-trip once.
+export function hydrateLiveCache() {
+  if (hydratePromise) return hydratePromise;
+  hydratePromise = (async () => {
+    const remote = await getRemote(LIVE_CACHE_KEY, null);
+    if (remote && remote.cache) {
+      liveCache = remote.cache;
+      lastRefreshed = remote.lastRefreshed ? new Date(remote.lastRefreshed) : null;
+    }
+    hydrated = true;
+  })();
+  return hydratePromise;
+}
+export function isHydrated() { return hydrated; }
 
 function zero12() { return Array(12).fill(0); }
 
@@ -97,4 +121,6 @@ export async function refreshLiveData(onProgress) {
     if (onProgress) onProgress(done, needed.length);
   }
   lastRefreshed = new Date();
+  // Persist to the shared backend so every device sees this instantly next time
+  await setRemote(LIVE_CACHE_KEY, { cache: liveCache, lastRefreshed: lastRefreshed.toISOString() });
 }

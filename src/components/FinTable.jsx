@@ -1,7 +1,8 @@
 import React from 'react';
 import { fmt, rowSum } from '../utils.js';
+import { HeadBreakdownPie, MonthlyTotalBarChart } from './Charts.jsx';
 
-export default function FinTable({ structure, data, visMo }) {
+export default function FinTable({ structure, data, visMo, chartTitle, chartColor }) {
   if (!visMo || visMo.length === 0) {
     return <p className="no-data">No data available for this period yet.</p>;
   }
@@ -12,8 +13,24 @@ export default function FinTable({ structure, data, visMo }) {
   );
   const grandTotal = colTotals.reduce((a, b) => a + b, 0);
 
+  // Head-wise totals for pie chart
+  const headTotals = structure.map(grp => ({
+    name: grp.head,
+    value: grp.subs.reduce((s, sub) => s + rowSum(data[sub] || [], visMo), 0),
+  }));
+
   return (
     <div className="tab-content">
+      <div className="chart-row">
+        <HeadBreakdownPie title={`${chartTitle} Breakdown by Head`} headTotals={headTotals} />
+        <MonthlyTotalBarChart
+          title={`Monthly ${chartTitle} Trend`}
+          months={visMo.map(m => m.label)}
+          values={visMo.map(m => allSubs.reduce((s, sub) => s + ((data[sub] || [])[m.idx] || 0), 0))}
+          color={chartColor}
+        />
+      </div>
+
       <div className="tbl-wrap no-scroll">
         <table>
           <thead>

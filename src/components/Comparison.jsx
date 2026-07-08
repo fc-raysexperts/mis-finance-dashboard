@@ -2,6 +2,7 @@ import React from 'react';
 import { fmt, rowSum } from '../utils.js';
 import { REV_STRUCTURE, EXP_STRUCTURE, FY_CONFIG, MONTHS } from '../data/structure.js';
 import { getRevData, getExpData } from '../data/dataService.js';
+import { FYComparisonChart } from './Charts.jsx';
 
 function PLRowsInner({ fyDatasets, moIdx }) {
   const N = FY_CONFIG.length;
@@ -100,9 +101,27 @@ export default function Comparison({ selOption, setSelOption }) {
     exp: getExpData(f.id),
   }));
   const moIdx = selOption === 0 ? null : selOption - 1;
+  const getVal = (arr, visMo) => moIdx === null ? rowSum(arr, visMo) : (arr[moIdx] || 0);
+
+  // Chart data: Revenue, Expenses, EBITDA per FY for the selected period
+  const chartRevenue = fyDatasets.map(fd =>
+    Object.keys(fd.rev.data).reduce((s, sub) => s + getVal(fd.rev.data[sub] || [], fd.rev.visMo), 0));
+  const chartExpenses = fyDatasets.map(fd =>
+    Object.keys(fd.exp.data).reduce((s, sub) => s + getVal(fd.exp.data[sub] || [], fd.exp.visMo), 0));
+  const chartFinCost = fyDatasets.map(fd => getVal(fd.exp.data['Finance Costs']    || [], fd.exp.visMo));
+  const chartTaxExp  = fyDatasets.map(fd => getVal(fd.exp.data['Tax Paid Expense'] || [], fd.exp.visMo));
+  const chartDepn    = fyDatasets.map(fd => getVal(fd.exp.data['Depreciation']      || [], fd.exp.visMo));
+  const chartEbitda  = chartRevenue.map((r, i) => r - chartExpenses[i] + chartFinCost[i] + chartTaxExp[i] + chartDepn[i]);
 
   return (
     <div className="tab-content">
+      <FYComparisonChart
+        fyLabels={FY_CONFIG.map(f => f.label)}
+        revenue={chartRevenue}
+        expenses={chartExpenses}
+        ebitda={chartEbitda}
+      />
+
       <div className="cmp-header-bar">
         <span className="cmp-main-title">Comparison — All Fiscal Years</span>
         <div className="cmp-selector-wrap">

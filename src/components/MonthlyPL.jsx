@@ -2,6 +2,7 @@ import React from 'react';
 import { fmt, rowSum } from '../utils.js';
 import { REV_STRUCTURE, EXP_STRUCTURE, FY_CONFIG } from '../data/structure.js';
 import { getRevData, getExpData } from '../data/dataService.js';
+import { RevenueExpenseTrendChart } from './Charts.jsx';
 
 function AnnualRowsInner() {
   const fyDatasets = FY_CONFIG.map(f => ({
@@ -125,6 +126,13 @@ export default function MonthlyPL({ revData, expData, visMo }) {
 
   return (
     <div className="tab-content">
+      <RevenueExpenseTrendChart
+        months={visMo.map(m => m.label)}
+        revenue={totalRev}
+        expenses={totalExp}
+        ebitda={ebitda}
+      />
+
       {/* Monthly P&L table — no internal scroll, page scrolls */}
       <div className="tbl-wrap no-scroll">
         <table>

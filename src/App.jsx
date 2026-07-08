@@ -2,11 +2,16 @@ import React, { useState, useEffect, useCallback } from 'react';
 import FinTable from './components/FinTable.jsx';
 import MonthlyPL from './components/MonthlyPL.jsx';
 import Comparison from './components/Comparison.jsx';
-import { getRevData, getExpData, refreshLiveData, getLastRefreshed } from './data/dataService.js';
+import InvestorSummary from './components/InvestorSummary.jsx';
+import Outlook from './components/Outlook.jsx';
+import SolarParks from './components/SolarParks.jsx';
+import Manufacturing from './components/Manufacturing.jsx';
+import UKArin from './components/UKArin.jsx';
+import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveCache } from './data/dataService.js';
 import { FY_CONFIG, REV_STRUCTURE, EXP_STRUCTURE } from './data/structure.js';
 import { downloadFYSheet, downloadComparisonSheet } from './excelExport.js';
 
-const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison'];
+const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Outlook & Order Book', 'Solar Parks', 'Manufacturing', 'UK - Arin Power'];
 
 function ChartIcon() {
   return (
@@ -34,6 +39,7 @@ export default function App() {
   const [liveError, setLiveError]     = useState(null);
   const [cmpOption, setCmpOption]     = useState(0); // lifted for download
   const [, forceUpdate]         = useState(0);
+  const [hydrating, setHydrating] = useState(true);
 
   const doRefresh = useCallback(async () => {
     if (loading) return;
@@ -49,13 +55,22 @@ export default function App() {
   }, [loading]);
 
   useEffect(() => {
-    const today = new Date().toDateString();
-    let stored = null;
-    try { stored = sessionStorage.getItem('mis_refresh_day'); } catch(_) {}
-    if (stored !== today) {
-      try { sessionStorage.setItem('mis_refresh_day', today); } catch(_) {}
-      setTimeout(() => doRefresh(), 500);
-    }
+    (async () => {
+      // 1. Load whatever was last refreshed (by anyone, on any device) —
+      //    this is a single fast request, so figures appear almost instantly.
+      await hydrateLiveCache();
+      const cached = getLastRefreshed();
+      setLastRefresh(cached);
+      setHydrating(false);
+      forceUpdate(n => n + 1);
+
+      // 2. Only hit the Zoho Books API loop in the background if the cached
+      //    data is missing or from a previous day — most visits won't need this.
+      const today = new Date().toDateString();
+      if (!cached || cached.toDateString() !== today) {
+        doRefresh();
+      }
+    })();
   }, []); // eslint-disable-line
 
   const revD = getRevData(curFY);
@@ -82,47 +97,54 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="header-left">
-          <div className="header-icon"><ChartIcon /></div>
-          <div className="header-text">
-            <span className="app-title">MIS Finance Dashboard</span>
-            <span className="app-sub">Rays Power Experts</span>
+      <div className="sticky-top-group">
+        <header className="app-header">
+          <div className="header-left">
+            <div className="header-icon"><ChartIcon /></div>
+            <div className="header-text">
+              <span className="app-title">MIS Finance Dashboard</span>
+              <span className="app-sub">Rays Power Experts</span>
+            </div>
           </div>
-        </div>
-        <div className="header-right">
-          <div className="fy-seg">
-            {FY_CONFIG.map(f => (
-              <button key={f.id} className={`fy-btn${curFY === f.id ? ' active' : ''}`}
-                onClick={() => setCurFY(f.id)}>{f.label}</button>
-            ))}
+          <div className="header-right">
+            <div className="fy-seg">
+              {FY_CONFIG.map(f => (
+                <button key={f.id} className={`fy-btn${curFY === f.id ? ' active' : ''}`}
+                  onClick={() => setCurFY(f.id)}>{f.label}</button>
+              ))}
+            </div>
+            <button className="download-btn" onClick={handleDownload}>
+              ⬇ {downloadLabel}
+            </button>
+            <button className={`refresh-btn${loading ? ' loading' : ''}`}
+              onClick={doRefresh} disabled={loading}>
+              <span className="refresh-icon">↻</span>{refreshLabel}
+            </button>
           </div>
-          <button className="download-btn" onClick={handleDownload}>
-            ⬇ {downloadLabel}
-          </button>
-          <button className={`refresh-btn${loading ? ' loading' : ''}`}
-            onClick={doRefresh} disabled={loading}>
-            <span className="refresh-icon">↻</span>{refreshLabel}
-          </button>
-        </div>
-      </header>
+        </header>
+
+        <nav className="tab-nav">
+          {TABS.map((t, i) => (
+            <button key={t} className={`tab-btn${curTab === i ? ' active' : ''}`}
+              onClick={() => setCurTab(i)}>{t}</button>
+          ))}
+        </nav>
+      </div>
 
       {liveError && (
         <div className="error-banner">⚠ {liveError} — hardcoded data is still shown below.</div>
       )}
 
-      <nav className="tab-nav">
-        {TABS.map((t, i) => (
-          <button key={t} className={`tab-btn${curTab === i ? ' active' : ''}`}
-            onClick={() => setCurTab(i)}>{t}</button>
-        ))}
-      </nav>
-
       <main className="app-main">
         {curTab === 0 && <MonthlyPL revData={revD.data} expData={expD.data} visMo={revD.visMo} />}
-        {curTab === 1 && <FinTable structure={REV_STRUCTURE} data={revD.data} visMo={revD.visMo} />}
-        {curTab === 2 && <FinTable structure={EXP_STRUCTURE} data={expD.data} visMo={expD.visMo} />}
+        {curTab === 1 && <FinTable structure={REV_STRUCTURE} data={revD.data} visMo={revD.visMo} chartTitle="Revenue" chartColor="#3b82f6" />}
+        {curTab === 2 && <FinTable structure={EXP_STRUCTURE} data={expD.data} visMo={expD.visMo} chartTitle="Expenses" chartColor="#ef4444" />}
         {curTab === 3 && <Comparison selOption={cmpOption} setSelOption={setCmpOption} />}
+        {curTab === 4 && <InvestorSummary curFY={curFY} />}
+        {curTab === 5 && <Outlook curFY={curFY} />}
+        {curTab === 6 && <SolarParks />}
+        {curTab === 7 && <Manufacturing />}
+        {curTab === 8 && <UKArin />}
       </main>
 
       <footer className="app-footer">
