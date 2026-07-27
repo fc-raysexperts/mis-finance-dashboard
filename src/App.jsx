@@ -40,6 +40,7 @@ export default function App() {
   const [cmpOption, setCmpOption]     = useState(0); // lifted for download
   const [, forceUpdate]         = useState(0);
   const [hydrating, setHydrating] = useState(true);
+  const [showCredits, setShowCredits] = useState(false);
 
   const doRefresh = useCallback(async () => {
     if (loading) return;
@@ -122,8 +123,8 @@ export default function App() {
             </button>
           </div>
           <div className="header-right">
-            <span className="dev-credit-name">Developed by: ASHISH KASWAN</span>
-            <span className="dev-credit-role">Business Analyst, Finance Control</span>
+            <span className="dev-credit-name">Finance Control Team</span>
+            <button className="credits-btn" onClick={() => setShowCredits(true)}>Credits</button>
           </div>
         </header>
 
@@ -154,6 +155,20 @@ export default function App() {
       <footer className="app-footer">
         Values in Indian format · Cr = Crores · L = Lakhs · Data shown up to previous month only
       </footer>
+
+      {showCredits && (
+        <div className="modal-overlay" onClick={() => setShowCredits(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <h3 className="modal-title">Credits</h3>
+            <div className="modal-row"><span className="modal-label">Name:</span> <b>Ashish Kaswan</b></div>
+            <div className="modal-row"><span className="modal-label">Designation:</span> Business Analyst</div>
+            <div className="modal-row"><span className="modal-label">Team:</span> Finance Control</div>
+            <div className="modal-row"><span className="modal-label">Dept.:</span> Finance &amp; Accounting</div>
+            <div className="modal-row"><span className="modal-label">Firm:</span> Rays Power Experts Ltd.</div>
+            <button className="modal-close-btn" onClick={() => setShowCredits(false)}>Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
