@@ -7,11 +7,12 @@ import Outlook from './components/Outlook.jsx';
 import SolarParks from './components/SolarParks.jsx';
 import Manufacturing from './components/Manufacturing.jsx';
 import UKArin from './components/UKArin.jsx';
+import NPD from './components/NPD.jsx';
 import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveCache } from './data/dataService.js';
 import { FY_CONFIG, REV_STRUCTURE, EXP_STRUCTURE } from './data/structure.js';
 import { downloadFYSheet, downloadComparisonSheet } from './excelExport.js';
 
-const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Outlook & Order Book', 'Solar Parks', 'Manufacturing', 'UK - Arin Power'];
+const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Outlook & Order Book', 'Solar Parks', 'Manufacturing', 'UK - Arin Power', 'New Park Development'];
 
 function ChartIcon() {
   return (
@@ -150,6 +151,7 @@ export default function App() {
         {curTab === 6 && <SolarParks />}
         {curTab === 7 && <Manufacturing />}
         {curTab === 8 && <UKArin />}
+        {curTab === 9 && <NPD />}
       </main>
 
       <footer className="app-footer">

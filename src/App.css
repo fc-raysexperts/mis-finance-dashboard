@@ -589,3 +589,23 @@ tr.head-group-end td {
 .tier-bar-fill { height: 100%; border-radius: 8px; }
 .tier-pct { text-align: right; font-size: 12px; font-weight: 700; color: #1e3a5f; }
 .tier-detail { text-align: right; font-size: 12px; color: #475569; font-weight: 600; }
+
+/* ── NPD tab ─────────────────────────────────────────────────────────────── */
+.npd-loading {
+  display: flex; align-items: center; gap: 10px;
+  background: #f0f4ff; border: 1px solid #93c5fd; border-radius: 10px;
+  padding: 14px 18px; margin-top: 14px; font-size: 13px; font-weight: 600; color: #1e3a5f;
+}
+.npd-spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2.5px solid #93c5fd; border-top-color: #2563eb;
+  animation: spin 0.8s linear infinite; flex-shrink: 0;
+}
+.npd-unclassified-row { background: #fff7ed; }
+.npd-unclassified-row td { color: #c2410c; }
+.npd-txn-scroll { max-height: 520px; overflow-y: auto; }
+.npd-txn-scroll table thead { position: sticky; top: 0; background: #fff; z-index: 1; }
+.npd-park-table th {
+  text-transform: none; white-space: normal; line-height: 1.25;
+  vertical-align: bottom; font-size: 10.5px;
+}

@@ -67,3 +67,10 @@ server.listen(PORT, () => {
   console.log(`  Debug URL:  http://localhost:${PORT}/api/debug`);
   console.log(`  Then run:   npm run dev  →  http://localhost:5173`);
 });
+
+// Node's default socket/request timeouts vary by version and weren't
+// explicit before — setting this defensively to the same 5-minute ceiling
+// used by the Vite proxy and Vercel's maxDuration, so this can't become a
+// second, harder-to-diagnose source of the same "fetch failed" symptom.
+server.timeout = 300000;
+if ('requestTimeout' in server) server.requestTimeout = 300000;
