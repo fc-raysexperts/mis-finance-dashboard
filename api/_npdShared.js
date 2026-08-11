@@ -144,8 +144,15 @@ export async function fetchAllAccounts(H, ORG) {
     page++; if (page > 15) break;
     await sleep(400);
   }
+  // GUARD: never cache a suspiciously small result. We know from months of
+  // validation the real Chart of Accounts has 3,300+ entries — anything far
+  // below that means the fetch failed (bad token, rate limit, etc.), not
+  // that the org genuinely has almost no accounts. Caching a failed fetch's
+  // empty result is exactly what caused this class of bug once already.
+  const looksReal = all.length >= 1000;
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis) { try { await redis.set('npd:cache:coa_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  if (redis && looksReal) { try { await redis.set('npd:cache:coa_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
@@ -162,8 +169,10 @@ export async function fetchAllGlAccounts(H, ORG) {
     page++; if (page > 5) break;
     await sleep(400);
   }
+  const looksReal = all.length >= 1000; // known real size ~3,700+
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis) { try { await redis.set('npd:cache:gl_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  if (redis && looksReal) { try { await redis.set('npd:cache:gl_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
@@ -180,8 +189,10 @@ export async function fetchAllProjects(H, ORG) {
     page++; if (page > 5) break;
     await sleep(400);
   }
+  const looksReal = all.length >= 30; // known real size ~57+
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis) { try { await redis.set('npd:cache:projects', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  if (redis && looksReal) { try { await redis.set('npd:cache:projects', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 

@@ -41,6 +41,19 @@ export default async function handler(req, res) {
     const glAccounts = glResult.data;
     const projects = projectsResult.data;
 
+    // GUARD: if the foundational shared data looks broken (far below known
+    // real sizes), stop immediately rather than compute — and potentially
+    // cache — 15 parks' worth of garbage built on top of a failed fetch.
+    // This is what would have caught the incident where a transient Zoho
+    // failure silently cached empty results for days.
+    if (accounts.length < 1000 || glAccounts.length < 1000 || projects.length < 30) {
+      return res.status(502).json({
+        error: 'Upstream data looks broken — refusing to compute or cache park summaries on top of it',
+        detail: { coa_accounts_fetched: accounts.length, gl_accounts_fetched: glAccounts.length, projects_fetched: projects.length },
+        note: 'Expected roughly 3300+ CoA accounts, 3700+ GL accounts, 57+ projects. If these are genuinely low, check Zoho auth/token status directly.',
+      });
+    }
+
     let customClassifications = {};
     const redis = await getRedis();
     if (redis) { try { customClassifications = (await redis.hgetall('npd:custom_classifications')) || {}; } catch { /* non-fatal */ } }

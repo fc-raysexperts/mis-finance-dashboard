@@ -1,4 +1,5 @@
 import { getAccessToken } from './_tokenCache.js';
+import { getSecondsUntilNext6AMIST } from './_npdShared.js';
 
 // Keyword map — one entry per real, currently-active NPD park (confirmed
 // against ZB's own Projects list). Excludes dormant/non-park Excel entries
@@ -326,6 +327,17 @@ export default async function handler(req, res) {
     const glAccounts = glResult.data;
     const keywords = PARK_KEYWORDS[park];
 
+    // GUARD: if upstream data looks broken, stop before computing/serving
+    // anything built on top of a failed fetch — same fix as the summary
+    // endpoint, for the case where a single park is loaded directly.
+    if (accounts.length < 1000 || glAccounts.length < 1000) {
+      return res.status(502).json({
+        error: 'Upstream data looks broken — refusing to compute on top of it',
+        detail: { coa_accounts_fetched: accounts.length, gl_accounts_fetched: glAccounts.length },
+        note: 'Expected roughly 3300+ CoA accounts, 3700+ GL accounts. If genuinely low, check Zoho auth/token status directly.',
+      });
+    }
+
     // Load user-saved classifications ONCE per request (single Redis read),
     // not per-transaction — these take priority over hardcoded rules.
     let customClassifications = {};
@@ -503,7 +515,6 @@ export default async function handler(req, res) {
 //    needing 5 accounts. 10-minute TTL: long enough to eliminate redundant
 //    fetches when browsing multiple parks in one session, short enough that
 //    genuinely new accounts (e.g. a CoA-transition park) show up promptly.
-const CACHE_TTL_SECONDS = 600;
 async function fetchAllAccounts(H, ORG) {
   const redis = await getRedis();
   if (redis) {
@@ -529,11 +540,16 @@ async function fetchAllAccounts(H, ORG) {
     await sleep(400);
   }
 
+  // GUARD: never cache a suspiciously small result — real CoA has 3,300+
+  // accounts, so far below that means the fetch failed, not that the org
+  // genuinely has almost nothing. This is the exact fix for the incident
+  // where a failed fetch got cached and served stale zeros for days.
+  const looksReal = all.length >= 1000;
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis) {
-    try { await redis.set('npd:cache:coa_accounts', all, { ex: CACHE_TTL_SECONDS }); writeStatus = 'write_ok'; }
+  if (redis && looksReal) {
+    try { await redis.set('npd:cache:coa_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; }
     catch (e) { writeStatus = `write_failed: ${e.message}`; }
-  }
+  } else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
@@ -560,11 +576,12 @@ async function fetchAllGlAccounts(H, ORG) {
     await sleep(400);
   }
 
+  const looksReal = all.length >= 1000; // known real size ~3,700+
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis) {
-    try { await redis.set('npd:cache:gl_accounts', all, { ex: CACHE_TTL_SECONDS }); writeStatus = 'write_ok'; }
+  if (redis && looksReal) {
+    try { await redis.set('npd:cache:gl_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; }
     catch (e) { writeStatus = `write_failed: ${e.message}`; }
-  }
+  } else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
@@ -612,11 +629,12 @@ async function fetchAllProjects(H, ORG) {
     await sleep(400);
   }
 
+  const looksReal = all.length >= 30; // known real size ~57+
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis) {
-    try { await redis.set('npd:cache:projects', all, { ex: CACHE_TTL_SECONDS }); writeStatus = 'write_ok'; }
+  if (redis && looksReal) {
+    try { await redis.set('npd:cache:projects', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; }
     catch (e) { writeStatus = `write_failed: ${e.message}`; }
-  }
+  } else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
