@@ -20,6 +20,34 @@ function buildPeriodQuery({ periodType, fy, quarter, year, month }) {
   return 'period=total';
 }
 
+// Round-robin into 4 chunks so the heaviest parks (Dechu, Lunkaransar,
+// Panchu) land in DIFFERENT chunks rather than clustering together — keeps
+// each chunk's total work roughly balanced instead of one chunk being much
+// slower than the others.
+const PARK_CHUNKS = [0, 1, 2, 3].map(offset => PARK_LIST.filter((_, i) => i % 4 === offset));
+
+function mergeSummaryChunks(chunkResults) {
+  const parks = {};
+  for (const chunk of chunkResults) Object.assign(parks, chunk.parks || {});
+
+  const allCategories = new Set();
+  Object.values(parks).forEach(p => Object.keys(p.category_totals || {}).forEach(c => allCategories.add(c)));
+  const sum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
+  for (const cat of allCategories) sum.category_totals[cat] = 0;
+  for (const p of Object.values(parks)) {
+    sum.cwip_total += p.cwip_total || 0;
+    sum.iaud_total += p.iaud_total || 0;
+    sum.total += p.total || 0;
+    for (const [cat, amt] of Object.entries(p.category_totals || {})) sum.category_totals[cat] += amt;
+  }
+  sum.cwip_total = Math.round(sum.cwip_total * 100) / 100;
+  sum.iaud_total = Math.round(sum.iaud_total * 100) / 100;
+  sum.total = Math.round(sum.total * 100) / 100;
+  for (const k in sum.category_totals) sum.category_totals[k] = Math.round(sum.category_totals[k] * 100) / 100;
+
+  return { parks, sum };
+}
+
 export default function NPD() {
   const [periodType, setPeriodType] = useState('total');
   const [fy, setFy] = useState(27);
@@ -38,18 +66,30 @@ export default function NPD() {
 
   const periodQuery = buildPeriodQuery({ periodType, fy, quarter, year, month });
 
+  const [summaryChunksLoaded, setSummaryChunksLoaded] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
-    setSummaryLoading(true); setSummaryError(null);
-    fetch(`/api/npdAllParksSummary?${periodQuery}`)
-      .then(r => r.json())
-      .then(d => {
+    setSummaryLoading(true); setSummaryError(null); setSummaryChunksLoaded(0);
+
+    Promise.all(
+      PARK_CHUNKS.map(chunk =>
+        fetch(`/api/npdAllParksSummary?${periodQuery}&parks=${chunk.map(encodeURIComponent).join(',')}`)
+          .then(r => r.json())
+          .then(d => {
+            if (d.error) throw new Error(d.error);
+            if (!cancelled) setSummaryChunksLoaded(n => n + 1);
+            return d;
+          })
+      )
+    )
+      .then(chunkResults => {
         if (cancelled) return;
-        if (d.error) throw new Error(d.error);
-        setSummary(d);
+        setSummary(mergeSummaryChunks(chunkResults));
       })
       .catch(e => { if (!cancelled) setSummaryError(e.message); })
       .finally(() => { if (!cancelled) setSummaryLoading(false); });
+
     return () => { cancelled = true; };
   }, [periodQuery]);
 
@@ -115,7 +155,7 @@ export default function NPD() {
       {/* ── Summary tables ── */}
       {summaryLoading && (
         <div className="npd-loading">
-          <span className="npd-spinner" /> Loading summary for all 15 parks — this can take a while, especially on a cold cache…
+          <span className="npd-spinner" /> Loading summary — {summaryChunksLoaded}/{PARK_CHUNKS.length} groups done (parallel requests, can take a while on a cold cache)…
         </div>
       )}
       {summaryError && <div className="error-banner">⚠ {summaryError}</div>}

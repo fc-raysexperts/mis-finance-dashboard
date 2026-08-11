@@ -4,7 +4,9 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/npdCronRefreshPark.js": { "maxDuration": 300 }
+    "api/npdCronRefreshPark.js": { "maxDuration": 300 },
+    "api/npdParkTransactions.js": { "maxDuration": 300 },
+    "api/npdAllParksSummary.js": { "maxDuration": 300 }
   },
   "crons": [
     { "path": "/api/npdCronRefreshPark?park=Jaisalmer",    "schedule": "30 0 * * *" },

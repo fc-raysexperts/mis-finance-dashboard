@@ -60,7 +60,17 @@ export default async function handler(req, res) {
 
     const parkSummaries = {};
 
-    for (const [park, keywords] of Object.entries(PARK_KEYWORDS)) {
+    // Accept an optional ?parks=Jaisalmer,Kolayat,... param to process only a
+    // subset — this is what lets the frontend split 15 parks' worth of work
+    // across several smaller, parallel calls instead of one giant sequential
+    // loop that risks exceeding Vercel's 300s function timeout. Defaults to
+    // all 15 if not provided (used by the cron and any full-refresh case).
+    const requestedParks = req.query.parks
+      ? req.query.parks.split(',').map(p => p.trim()).filter(p => PARK_KEYWORDS[p])
+      : Object.keys(PARK_KEYWORDS);
+
+    for (const park of requestedParks) {
+      const keywords = PARK_KEYWORDS[park];
       const parkAccounts = accounts.filter(a => {
         if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
         const cn = (a.account_name || '').toLowerCase();
