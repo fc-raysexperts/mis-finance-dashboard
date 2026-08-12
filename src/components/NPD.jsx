@@ -160,6 +160,11 @@ export default function NPD() {
       )}
       {summaryError && <div className="error-banner">⚠ {summaryError}</div>}
 
+      {summaryError && summary && (
+        <div className="npd-loading" style={{ background: '#fff7ed', borderColor: '#fdba74', color: '#c2410c' }}>
+          ⚠ The tables below are from an earlier successful load, not the most recent attempt — the retry just now failed with the error above.
+        </div>
+      )}
       {summary && !summaryLoading && (
         <>
           <div className="tbl-wrap no-scroll npd-park-table">

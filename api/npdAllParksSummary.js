@@ -69,6 +69,29 @@ export default async function handler(req, res) {
       : Object.keys(PARK_KEYWORDS);
 
     for (const park of requestedParks) {
+      // FIXED: check the exact same cache Park Detail already uses, before
+      // doing any live work. Previously this loop always recomputed live
+      // for every park on every summary request, even when Park Detail was
+      // successfully serving that same park+period instantly from cache —
+      // meaning Summary was hitting Zoho far more than necessary, which is
+      // exactly what made it disproportionately likely to hit rate limits
+      // while Park Detail kept working fine.
+      const cachedParkFull = redis ? await (async () => {
+        try { return await redis.get(`npd:cache:park_full:${park}:${periodLabel}`); } catch { return null; }
+      })() : null;
+
+      if (cachedParkFull) {
+        parkSummaries[park] = {
+          account_count: cachedParkFull.account_count,
+          cwip_total: cachedParkFull.cwip_total,
+          iaud_total: cachedParkFull.iaud_total,
+          total: cachedParkFull.total,
+          unclassified_count: cachedParkFull.unclassified_count,
+          category_totals: cachedParkFull.category_totals,
+        };
+        continue; // skip all live computation for this park entirely
+      }
+
       const keywords = PARK_KEYWORDS[park];
       const parkAccounts = accounts.filter(a => {
         if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
