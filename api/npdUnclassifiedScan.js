@@ -34,63 +34,72 @@ export default async function handler(req, res) {
         error: 'Upstream data looks broken — refusing to scan on top of it',
         detail: { coa_accounts_fetched: allCoaAccounts.length, gl_accounts_fetched: allGlAccounts.length, projects_fetched: allProjects.length },
         note: 'Expected roughly 3300+ CoA accounts, 3700+ GL accounts, 57+ projects. If genuinely low, check Zoho auth/token status directly.',
-    });
-  }
-
-  // Grouped by distinct (account_name + category) pair, across ALL parks —
-  // so the same unclassified account name showing up in 5 different parks
-  // gets reviewed ONCE, not 5 times.
-  const unclassifiedGrouped = {};
-
-  for (const [park, keywords] of Object.entries(PARK_KEYWORDS)) {
-    const parkAccounts = allCoaAccounts.filter(a => {
-      if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
-      const cn = (a.account_name || '').toLowerCase();
-      const pn = (a.parent_account_name || '').toLowerCase();
-      return keywords.some(kw => cn.includes(kw) || pn.includes(kw));
-    }).filter(a => {
-      const g = allGlAccounts.find(g => g.name === a.account_name);
-      return g && (parseFloat(g.debit_total) || 0) !== 0;
-    });
-    for (const acct of parkAccounts) {
-      const cls = classify(acct.account_name, park);
-      if (cls.category === 'Unclassified') {
-        const g = allGlAccounts.find(g => g.name === acct.account_name);
-        const key = `${acct.account_name}__CoA`;
-        if (!unclassifiedGrouped[key]) unclassifiedGrouped[key] = { account_name: acct.account_name, source: 'chart_of_accounts', parks: [], total: 0 };
-        unclassifiedGrouped[key].parks.push(park);
-        unclassifiedGrouped[key].total += g ? parseFloat(g.debit_total) || 0 : 0;
-      }
+      });
     }
 
-    const matchedProjects = matchParkProjects(allProjects, keywords);
-    for (const proj of matchedProjects) {
-      const bills = await fetchProjectBills(H, ORG, proj.project_id);
-      for (const b of bills) {
-        const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
-        for (const li of (dd.bill?.line_items || [])) {
-          const cls = classifyFlatAccount(li.account_name);
-          if (cls.category === 'Unclassified') {
-            const key = `${li.account_name}__Bills`;
-            if (!unclassifiedGrouped[key]) unclassifiedGrouped[key] = { account_name: li.account_name, source: 'project_tagged_bill_supplemental', parks: [], total: 0 };
-            unclassifiedGrouped[key].parks.push(park);
-            unclassifiedGrouped[key].total += parseFloat(li.item_total) || 0;
-          }
+    // Optional ?parks=X,Y,Z to scan only a subset — a full 15-park scan can
+    // now approach the 300s ceiling given the safer (slower) pacing, so this
+    // lets a full scan be split into a few smaller, safer calls if needed.
+    const requestedParks = req.query.parks
+      ? req.query.parks.split(',').map(p => p.trim()).filter(p => PARK_KEYWORDS[p])
+      : Object.keys(PARK_KEYWORDS);
+
+    // Grouped by distinct (account_name + category) pair, across ALL parks —
+    // so the same unclassified account name showing up in 5 different parks
+    // gets reviewed ONCE, not 5 times.
+    const unclassifiedGrouped = {};
+
+    for (const park of requestedParks) {
+      const keywords = PARK_KEYWORDS[park];
+      const parkAccounts = allCoaAccounts.filter(a => {
+        if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
+        const cn = (a.account_name || '').toLowerCase();
+        const pn = (a.parent_account_name || '').toLowerCase();
+        return keywords.some(kw => cn.includes(kw) || pn.includes(kw));
+      }).filter(a => {
+        const g = allGlAccounts.find(g => g.name === a.account_name);
+        return g && (parseFloat(g.debit_total) || 0) !== 0;
+      });
+      for (const acct of parkAccounts) {
+        const cls = classify(acct.account_name, park);
+        if (cls.category === 'Unclassified') {
+          const g = allGlAccounts.find(g => g.name === acct.account_name);
+          const key = `${acct.account_name}__CoA`;
+          if (!unclassifiedGrouped[key]) unclassifiedGrouped[key] = { account_name: acct.account_name, source: 'chart_of_accounts', parks: [], total: 0 };
+          unclassifiedGrouped[key].parks.push(park);
+          unclassifiedGrouped[key].total += g ? parseFloat(g.debit_total) || 0 : 0;
         }
-        await sleep(250);
       }
-      await sleep(300);
-    }
-  }
 
-  const results = Object.values(unclassifiedGrouped).map(g => ({
-    account_name: g.account_name,
-    source: g.source,
-    parks_affected: [...new Set(g.parks)],
-    total_amount: Math.round(g.total * 100) / 100,
-  })).sort((a, b) => b.total_amount - a.total_amount);
+      const matchedProjects = matchParkProjects(allProjects, keywords);
+      for (const proj of matchedProjects) {
+        const bills = await fetchProjectBills(H, ORG, proj.project_id);
+        for (const b of bills) {
+          const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
+          for (const li of (dd.bill?.line_items || [])) {
+            const cls = classifyFlatAccount(li.account_name);
+            if (cls.category === 'Unclassified') {
+              const key = `${li.account_name}__Bills`;
+              if (!unclassifiedGrouped[key]) unclassifiedGrouped[key] = { account_name: li.account_name, source: 'project_tagged_bill_supplemental', parks: [], total: 0 };
+              unclassifiedGrouped[key].parks.push(park);
+              unclassifiedGrouped[key].total += parseFloat(li.item_total) || 0;
+            }
+          }
+          await sleep(700); // sequential, not batched — 1 request/cycle needs ~750ms to stay safely under Zoho's 100/min limit
+        }
+        await sleep(700);
+      }
+    }
+
+    const results = Object.values(unclassifiedGrouped).map(g => ({
+      account_name: g.account_name,
+      source: g.source,
+      parks_affected: [...new Set(g.parks)],
+      total_amount: Math.round(g.total * 100) / 100,
+    })).sort((a, b) => b.total_amount - a.total_amount);
 
     return res.status(200).json({
+      parks_scanned: requestedParks,
       total_distinct_unclassified_account_names: results.length,
       total_unclassified_amount: Math.round(results.reduce((s, r) => s + r.total_amount, 0) * 100) / 100,
       findings: results,

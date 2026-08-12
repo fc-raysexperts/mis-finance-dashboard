@@ -1,5 +1,5 @@
 import { getAccessToken } from './_tokenCache.js';
-import { fetchAllProjects, getRedis } from './_npdShared.js';
+import { fetchAllProjects, getRedis, ZohoRateLimitError } from './_npdShared.js';
 
 // Kept in sync with npdParkTransactions.js — the full list of parks we
 // currently recognize. If a "[X] Solar Park" customer shows up in ZB whose
@@ -30,55 +30,62 @@ export default async function handler(req, res) {
   const H = { Authorization: `Zoho-oauthtoken ${access_token}` };
   const ORG = `organization_id=${ORG_ID}`;
 
-  // Now uses the SAME guarded fetch as everything else — never caches a
-  // suspiciously small (i.e. likely-failed) result, and shares the daily
-  // 6am-reset TTL instead of a stale fixed 10-minute one.
-  const projectsResult = await fetchAllProjects(H, ORG);
-  const projects = projectsResult.data;
-  const redis = await getRedis();
+  try {
+    // Now uses the SAME guarded fetch as everything else — never caches a
+    // suspiciously small (i.e. likely-failed) result, and shares the daily
+    // 6am-reset TTL instead of a stale fixed 10-minute one.
+    const projectsResult = await fetchAllProjects(H, ORG);
+    const projects = projectsResult.data;
+    const redis = await getRedis();
 
-  if (projects.length < 30) {
-    return res.status(502).json({
-      error: 'Upstream project data looks broken — refusing to scan on top of it',
-      detail: { projects_fetched: projects.length, cache_status: projectsResult.cache_status },
-      note: 'Expected roughly 57+ projects. If genuinely low, check Zoho auth/token status directly.',
-    });
-  }
-
-  // Every distinct customer_name ending in "solar park" — the structural
-  // signature of a real park entity, same pattern used throughout this
-  // investigation to distinguish real parks from unrelated businesses.
-  const solarParkCustomers = [...new Set(
-    projects.map(p => p.customer_name).filter(n => (n || '').toLowerCase().includes('solar park'))
-  )];
-
-  const allKnownKeywords = Object.values(KNOWN_PARK_KEYWORDS).flat();
-  const unrecognized = solarParkCustomers.filter(customerName => {
-    const n = customerName.toLowerCase();
-    return !allKnownKeywords.some(kw => n.includes(kw));
-  });
-
-  const flaggedNewParks = [];
-  if (redis) {
-    for (const customerName of unrecognized) {
-      const key = `npd:new_park_pending_review:${customerName}`;
-      const alreadyFlagged = await redis.get(key);
-      if (!alreadyFlagged) {
-        await redis.set(key, { first_detected: new Date().toISOString(), customer_name: customerName });
-        await redis.sadd('npd:new_parks_pending_review_set', customerName);
-      }
-      flaggedNewParks.push(customerName);
+    if (projects.length < 30) {
+      return res.status(502).json({
+        error: 'Upstream project data looks broken — refusing to scan on top of it',
+        detail: { projects_fetched: projects.length, cache_status: projectsResult.cache_status },
+        note: 'Expected roughly 57+ projects. If genuinely low, check Zoho auth/token status directly.',
+      });
     }
-  }
 
-  return res.status(200).json({
-    total_solar_park_customers_found: solarParkCustomers.length,
-    known_park_count: Object.keys(KNOWN_PARK_KEYWORDS).length,
-    unrecognized_solar_park_customers: unrecognized,
-    flagged_for_review: flaggedNewParks,
-    redis_available: !!redis,
-    note: unrecognized.length === 0
-      ? 'No new park entities detected — every "Solar Park" customer in ZB matches a known park.'
-      : `${unrecognized.length} unrecognized park customer(s) found. Confirm each is a genuinely new park (not a spelling variant of an existing one or an unrelated entity), then add its keyword to PARK_KEYWORDS in npdParkTransactions.js and KNOWN_PARK_KEYWORDS here.`,
-  });
+    // Every distinct customer_name ending in "solar park" — the structural
+    // signature of a real park entity, same pattern used throughout this
+    // investigation to distinguish real parks from unrelated businesses.
+    const solarParkCustomers = [...new Set(
+      projects.map(p => p.customer_name).filter(n => (n || '').toLowerCase().includes('solar park'))
+    )];
+
+    const allKnownKeywords = Object.values(KNOWN_PARK_KEYWORDS).flat();
+    const unrecognized = solarParkCustomers.filter(customerName => {
+      const n = customerName.toLowerCase();
+      return !allKnownKeywords.some(kw => n.includes(kw));
+    });
+
+    const flaggedNewParks = [];
+    if (redis) {
+      for (const customerName of unrecognized) {
+        const key = `npd:new_park_pending_review:${customerName}`;
+        const alreadyFlagged = await redis.get(key);
+        if (!alreadyFlagged) {
+          await redis.set(key, { first_detected: new Date().toISOString(), customer_name: customerName });
+          await redis.sadd('npd:new_parks_pending_review_set', customerName);
+        }
+        flaggedNewParks.push(customerName);
+      }
+    }
+
+    return res.status(200).json({
+      total_solar_park_customers_found: solarParkCustomers.length,
+      known_park_count: Object.keys(KNOWN_PARK_KEYWORDS).length,
+      unrecognized_solar_park_customers: unrecognized,
+      flagged_for_review: flaggedNewParks,
+      redis_available: !!redis,
+      note: unrecognized.length === 0
+        ? 'No new park entities detected — every "Solar Park" customer in ZB matches a known park.'
+        : `${unrecognized.length} unrecognized park customer(s) found. Confirm each is a genuinely new park (not a spelling variant of an existing one or an unrelated entity), then add its keyword to PARK_KEYWORDS in npdParkTransactions.js and KNOWN_PARK_KEYWORDS here.`,
+    });
+  } catch (err) {
+    if (err instanceof ZohoRateLimitError) {
+      return res.status(429).json({ error: 'RATE_LIMITED', message: err.message });
+    }
+    return res.status(500).json({ error: err.message, stack: err.stack });
+  }
 }

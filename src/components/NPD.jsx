@@ -72,7 +72,7 @@ export default function NPD() {
     let cancelled = false;
     setSummaryLoading(true); setSummaryError(null); setSummaryChunksLoaded(0);
 
-    Promise.all(
+    Promise.allSettled(
       PARK_CHUNKS.map(chunk =>
         fetch(`/api/npdAllParksSummary?${periodQuery}&parks=${chunk.map(encodeURIComponent).join(',')}`)
           .then(r => r.json())
@@ -83,17 +83,44 @@ export default function NPD() {
           })
       )
     )
-      .then(chunkResults => {
+      .then(settledResults => {
         if (cancelled) return;
-        setSummary(mergeSummaryChunks(chunkResults));
+        // Use whatever succeeded, even if some chunks failed — a single
+        // failing chunk (e.g. hit a rate limit) shouldn't throw away the
+        // other 3 that worked fine.
+        const successful = settledResults
+          .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
+          .filter(x => x.result.status === 'fulfilled');
+        const failed = settledResults
+          .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
+          .filter(x => x.result.status === 'rejected');
+
+        if (successful.length > 0) {
+          setSummary(mergeSummaryChunks(successful.map(x => x.result.value)));
+        }
+        if (failed.length > 0) {
+          const missingParks = failed.flatMap(x => x.chunk).join(', ');
+          const reason = failed[0].result.reason?.message || 'unknown error';
+          setSummaryError(
+            `${failed.length} of ${PARK_CHUNKS.length} groups failed to load — missing parks: ${missingParks}. ` +
+            `${successful.length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${reason}`
+          );
+        }
       })
-      .catch(e => { if (!cancelled) setSummaryError(e.message); })
       .finally(() => { if (!cancelled) setSummaryLoading(false); });
 
     return () => { cancelled = true; };
   }, [periodQuery]);
 
   useEffect(() => {
+    // Wait for Summary to finish first, rather than racing it. Otherwise the
+    // default park (Dechu) — which also lands in one of the summary chunks —
+    // would get computed live, redundantly, by BOTH requests simultaneously
+    // on every fresh page load, doubling Zoho load for the heaviest park
+    // right when rate-limit headroom matters most. Once Summary finishes,
+    // it's already cached this park's full data as a byproduct, so this
+    // fetch should land on a warm cache instead of duplicating the work.
+    if (summaryLoading) return;
     let cancelled = false;
     setParkDetailLoading(true); setParkDetailError(null);
     fetch(`/api/npdParkTransactions?park=${encodeURIComponent(selectedPark)}&${periodQuery}`)
@@ -106,7 +133,7 @@ export default function NPD() {
       .catch(e => { if (!cancelled) setParkDetailError(e.message); })
       .finally(() => { if (!cancelled) setParkDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedPark, periodQuery]);
+  }, [selectedPark, periodQuery, summaryLoading]);
 
   const sum = summary?.sum;
   const parks = summary?.parks || {};
@@ -162,7 +189,7 @@ export default function NPD() {
 
       {summaryError && summary && (
         <div className="npd-loading" style={{ background: '#fff7ed', borderColor: '#fdba74', color: '#c2410c' }}>
-          ⚠ The tables below are from an earlier successful load, not the most recent attempt — the retry just now failed with the error above.
+          ⚠ The tables below may be incomplete or from an earlier load — see the error above for what's missing and why.
         </div>
       )}
       {summary && !summaryLoading && (
@@ -242,7 +269,12 @@ export default function NPD() {
         </div>
       </div>
 
-      {parkDetailLoading && (
+      {summaryLoading && (
+        <div className="npd-loading">
+          <span className="npd-spinner" /> Waiting for the summary above to finish first…
+        </div>
+      )}
+      {!summaryLoading && parkDetailLoading && (
         <div className="npd-loading">
           <span className="npd-spinner" /> Loading {selectedPark}'s detail…
         </div>

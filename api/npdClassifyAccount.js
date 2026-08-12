@@ -1,4 +1,4 @@
-import { Redis } from '@upstash/redis';
+import { getRedis } from './_npdShared.js';
 
 const VALID_CATEGORIES = new Set([
   'Registration Fees', 'Commission', 'Land Lease Registration', 'Land Lease Expenses',
@@ -9,14 +9,12 @@ const VALID_HEAD_GROUPINGS = new Set(['CWIP', 'IAUD']);
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST,GET,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return res.status(500).json({ error: 'Redis not configured' });
-  const redis = new Redis({ url, token });
+  const redis = await getRedis();
+  if (!redis) return res.status(500).json({ error: 'Redis not configured' });
 
   if (req.method === 'GET') {
     // List every custom classification saved so far — useful for a

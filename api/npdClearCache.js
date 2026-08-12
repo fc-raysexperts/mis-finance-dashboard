@@ -19,6 +19,15 @@ export default async function handler(req, res) {
     periodLabels.push(`FY20${fy}`);
     for (let q = 1; q <= 4; q++) periodLabels.push(`FY20${fy} Q${q}`);
   }
+  // FIXED: monthly-period labels (format "YYYY-MM") were never generated
+  // here at all — meaning any cache written for a monthly view could never
+  // actually be cleared by this tool, silently, since the key just never
+  // appeared in the delete list.
+  for (let year = 2024; year <= 2027; year++) {
+    for (let month = 1; month <= 12; month++) {
+      periodLabels.push(`${year}-${String(month).padStart(2, '0')}`);
+    }
+  }
   for (const park of Object.keys(PARK_KEYWORDS)) {
     for (const label of periodLabels) {
       keysToDelete.push(`npd:cache:park_full:${park}:${label}`);

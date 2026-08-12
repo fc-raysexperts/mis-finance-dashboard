@@ -81,13 +81,17 @@ export default async function handler(req, res) {
       })() : null;
 
       if (cachedParkFull) {
+        // Defensive fallbacks — if this is a cache entry written by an older
+        // version of the code (before some field existed), fall back to a
+        // safe default instead of silently propagating undefined into the
+        // displayed tables.
         parkSummaries[park] = {
-          account_count: cachedParkFull.account_count,
-          cwip_total: cachedParkFull.cwip_total,
-          iaud_total: cachedParkFull.iaud_total,
-          total: cachedParkFull.total,
-          unclassified_count: cachedParkFull.unclassified_count,
-          category_totals: cachedParkFull.category_totals,
+          account_count: cachedParkFull.account_count ?? 0,
+          cwip_total: cachedParkFull.cwip_total ?? 0,
+          iaud_total: cachedParkFull.iaud_total ?? 0,
+          total: cachedParkFull.total ?? 0,
+          unclassified_count: cachedParkFull.unclassified_count ?? 0,
+          category_totals: cachedParkFull.category_totals ?? {},
         };
         continue; // skip all live computation for this park entirely
       }

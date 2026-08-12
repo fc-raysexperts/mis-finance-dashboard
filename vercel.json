@@ -10,19 +10,19 @@
   },
   "crons": [
     { "path": "/api/npdCronRefreshPark?park=Jaisalmer",    "schedule": "30 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Kolayat",      "schedule": "33 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Dechu",        "schedule": "36 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Lunkaransar",  "schedule": "39 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Napasar",      "schedule": "42 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Panchu",       "schedule": "45 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Pugal",        "schedule": "48 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Bhamatsar",    "schedule": "51 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Sanchore",     "schedule": "54 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Tosham",       "schedule": "57 0 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=SS%20Nagar",   "schedule": "0 1 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Thukariyasar", "schedule": "3 1 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Baithwasiya",  "schedule": "6 1 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Jasarasar",    "schedule": "9 1 * * *" },
-    { "path": "/api/npdCronRefreshPark?park=Sheruna",      "schedule": "12 1 * * *" }
+    { "path": "/api/npdCronRefreshPark?park=Kolayat",      "schedule": "35 0 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Dechu",        "schedule": "40 0 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Lunkaransar",  "schedule": "45 0 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Napasar",      "schedule": "50 0 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Panchu",       "schedule": "55 0 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Pugal",        "schedule": "0 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Bhamatsar",    "schedule": "5 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Sanchore",     "schedule": "10 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Tosham",       "schedule": "15 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=SS%20Nagar",   "schedule": "20 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Thukariyasar", "schedule": "25 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Baithwasiya",  "schedule": "30 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Jasarasar",    "schedule": "35 1 * * *" },
+    { "path": "/api/npdCronRefreshPark?park=Sheruna",      "schedule": "40 1 * * *" }
   ]
 }

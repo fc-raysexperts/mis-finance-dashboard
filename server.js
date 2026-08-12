@@ -46,7 +46,22 @@ const server = createServer(async (req, res) => {
 
     const query = {};
     url.searchParams.forEach((v, k) => { query[k] = v; });
-    const fakeReq = { method: 'GET', query };
+
+    // FIXED: this used to hardcode method: 'GET' always, meaning POST/DELETE
+    // could never be properly tested locally — they'd silently be treated as
+    // GET instead, with no error. Now reads the real method, and for
+    // POST/DELETE/PUT reads and parses the actual request body too (never
+    // attached before at all).
+    let body = undefined;
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (raw) {
+        try { body = JSON.parse(raw); } catch { body = raw; }
+      }
+    }
+    const fakeReq = { method: req.method, query, body };
 
     try {
       const mod = await import(`./api/${handlerName}.js?t=${Date.now()}`);
