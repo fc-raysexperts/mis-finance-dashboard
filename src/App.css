@@ -614,8 +614,8 @@ tr.head-group-end td {
    Date/Type/Bill#/Head/Amount narrowed, Vendor/Account widened, Category
    unchanged. Sums to 100%. VDLs after Type (col 3) and after Account (col 5). */
 .npd-detail-table th:nth-child(1), .npd-detail-table td:nth-child(1) { width: 7%; }  /* Date */
-.npd-detail-table th:nth-child(2), .npd-detail-table td:nth-child(2) { width: 27%; } /* Vendor */
-.npd-detail-table th:nth-child(3), .npd-detail-table td:nth-child(3) { width: 7%; border-right: 1.5px solid #94a3b8; } /* Type + VDL */
+.npd-detail-table th:nth-child(2), .npd-detail-table td:nth-child(2) { width: 27%; border-right: 1.5px solid #94a3b8; } /* Vendor + VDL */
+.npd-detail-table th:nth-child(3), .npd-detail-table td:nth-child(3) { width: 7%; }  /* Type */
 .npd-detail-table th:nth-child(4), .npd-detail-table td:nth-child(4) { width: 8%; }  /* Bill # */
 .npd-detail-table th:nth-child(5), .npd-detail-table td:nth-child(5) { width: 23%; border-right: 1.5px solid #94a3b8; } /* Account + VDL */
 .npd-detail-table th:nth-child(6), .npd-detail-table td:nth-child(6) { width: 13%; } /* Category — unchanged */

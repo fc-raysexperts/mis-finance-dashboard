@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fmt } from '../utils.js';
 import { NPDParkCostChart } from './Charts.jsx';
+import { downloadNPDExcel } from '../npdExcelExport.js';
 
 const PARK_LIST = [
   'Jaisalmer', 'Kolayat', 'Dechu', 'Lunkaransar', 'Napasar', 'Panchu', 'Pugal',
@@ -17,13 +18,23 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 // Vertical divider after every 3rd park column — computed from position, not
 // a hardcoded park-name list, so this automatically keeps working as new
 // parks get added via the discovery system, with zero further changes.
-const parkColStyle = (index) => (index + 1) % 3 === 0 ? { borderRight: '1.5px solid #94a3b8' } : {};
+// Deliberately never applied to the LAST column, even if divisible by 3 —
+// a divider "after the last park" only makes sense once a park actually
+// exists to its right.
+const parkColStyle = (index) => ((index + 1) % 3 === 0 && index < PARK_LIST.length - 1) ? { borderRight: '1.5px solid #94a3b8' } : {};
 
 function buildPeriodQuery({ periodType, fy, quarter, year, month }) {
   if (periodType === 'yearly') return `period=yearly&fy=${fy}`;
   if (periodType === 'quarterly') return `period=quarterly&fy=${fy}&quarter=${quarter}`;
   if (periodType === 'monthly') return `period=monthly&year=${year}&month=${month}`;
   return 'period=total';
+}
+
+function getPeriodLabel({ periodType, fy, quarter, year, month }) {
+  if (periodType === 'yearly') return `FY20${fy}`;
+  if (periodType === 'quarterly') return `FY20${fy}_Q${quarter}`;
+  if (periodType === 'monthly') return `${year}-${String(month).padStart(2, '0')}`;
+  return 'Total_Till_Date';
 }
 
 // Round-robin into 4 chunks so the heaviest parks (Dechu, Lunkaransar,
@@ -71,6 +82,28 @@ export default function NPD() {
   const [parkDetailError, setParkDetailError] = useState(null);
 
   const periodQuery = buildPeriodQuery({ periodType, fy, quarter, year, month });
+  const periodLabel = getPeriodLabel({ periodType, fy, quarter, year, month });
+
+  const [excelExporting, setExcelExporting] = useState(false);
+  const [excelProgress, setExcelProgress] = useState('');
+
+  async function handleDownloadExcel() {
+    if (!summary || excelExporting) return;
+    setExcelExporting(true);
+    setExcelProgress('Starting…');
+    try {
+      await downloadNPDExcel({
+        summary, periodQuery, periodLabel,
+        onProgress: (done, total, park) => setExcelProgress(`Fetching ${park} (${done}/${total})…`),
+      });
+    } catch (e) {
+      setExcelProgress('');
+      alert(`Excel export failed: ${e.message}`);
+    } finally {
+      setExcelExporting(false);
+      setExcelProgress('');
+    }
+  }
 
   const [summaryChunksLoaded, setSummaryChunksLoaded] = useState(0);
 
@@ -140,6 +173,14 @@ export default function NPD() {
       <div className="cmp-header-bar">
         <span className="cmp-main-title">New Park Development</span>
         <div className="cmp-selector-wrap">
+          <button
+            className="mo-select"
+            onClick={handleDownloadExcel}
+            disabled={!summary || excelExporting}
+            style={{ cursor: (!summary || excelExporting) ? 'not-allowed' : 'pointer', opacity: (!summary || excelExporting) ? 0.6 : 1 }}
+          >
+            {excelExporting ? (excelProgress || 'Generating…') : '⬇ Download Excel File'}
+          </button>
           <label className="cmp-selector-label">Period:</label>
           <select className="mo-select" value={periodType} onChange={e => setPeriodType(e.target.value)}>
             <option value="total">Total Till Date</option>

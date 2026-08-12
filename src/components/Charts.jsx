@@ -250,8 +250,34 @@ export function TierBreakdownBars({ items }) {
 }
 
 // ── Chart 9b: NPD tab — stacked CWIP/IAUD cost per park ──────────────────────
+function NPDCostTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="chart-tooltip">
+      <div className="chart-tooltip-label">{label}</div>
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-dot" style={{ background: '#60a5fa' }} />
+        IAUD: <b>{fmt(row.IAUD)}</b>
+      </div>
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-dot" style={{ background: '#f59e0b' }} />
+        CWIP: <b>{fmt(row.CWIP)}</b>
+      </div>
+      <div className="chart-tooltip-row">
+        <b>Total: {fmt(row.Total)}</b>
+      </div>
+    </div>
+  );
+}
+
 export function NPDParkCostChart({ parks, cwipValues, iaudValues }) {
-  const data = parks.map((p, i) => ({ name: p, IAUD: iaudValues[i] || 0, CWIP: cwipValues[i] || 0 }));
+  const data = parks.map((p, i) => {
+    const iaud = iaudValues[i] || 0;
+    const cwip = cwipValues[i] || 0;
+    return { name: p, IAUD: iaud, CWIP: cwip, Total: iaud + cwip };
+  });
   const CWIP_COLOR = '#f59e0b'; // amber — construction-phase spend, drawn on top
   const IAUD_COLOR = '#60a5fa'; // blue (MID_REVENUE) — development-phase spend, drawn below
   return (
@@ -263,9 +289,12 @@ export function NPDParkCostChart({ parks, cwipValues, iaudValues }) {
           <XAxis dataKey="name" interval={0} angle={-35} textAnchor="end"
             tick={{ fontSize: 11, fill: '#475569' }} height={70} />
           <YAxis tickFormatter={tickFmt} tick={{ fontSize: 11, fill: '#475569' }} width={55} />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={<NPDCostTooltip />} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar dataKey="IAUD" stackId="cost" fill={IAUD_COLOR} />
+          {/* Symmetrical shape: IAUD (bottom) rounds its bottom edge, CWIP
+              (top) rounds its top edge — same radius on both outer ends of
+              the combined stack, matching colors kept as-is. */}
+          <Bar dataKey="IAUD" stackId="cost" fill={IAUD_COLOR} radius={[0, 0, 4, 4]} maxBarSize={42} />
           <Bar dataKey="CWIP" stackId="cost" fill={CWIP_COLOR} radius={[4, 4, 0, 0]} maxBarSize={42} />
         </BarChart>
       </ResponsiveContainer>
