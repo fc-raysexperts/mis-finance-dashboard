@@ -50,5 +50,17 @@ export default async function handler(req, res) {
     });
   }
 
-  return res.status(405).json({ error: 'Only GET and POST supported' });
+  if (req.method === 'DELETE') {
+    const accountName = req.query.account_name;
+    if (!accountName) return res.status(400).json({ error: 'account_name query param is required' });
+    const key = accountName.toLowerCase().trim();
+    const deleted = await redis.hdel('npd:custom_classifications', key);
+    return res.status(200).json({
+      success: true,
+      deleted: deleted > 0,
+      message: deleted > 0 ? `"${accountName}" removed from custom classifications.` : `"${accountName}" was not found — nothing to delete.`,
+    });
+  }
+
+  return res.status(405).json({ error: 'Only GET, POST, and DELETE supported' });
 }

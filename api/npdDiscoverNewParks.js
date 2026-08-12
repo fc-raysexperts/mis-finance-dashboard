@@ -1,4 +1,5 @@
 import { getAccessToken } from './_tokenCache.js';
+import { fetchAllProjects, getRedis } from './_npdShared.js';
 
 // Kept in sync with npdParkTransactions.js — the full list of parks we
 // currently recognize. If a "[X] Solar Park" customer shows up in ZB whose
@@ -15,22 +16,6 @@ const KNOWN_PARK_KEYWORDS = {
   'SS Nagar': ['ss nagar', 's s nagar'], 'Thukariyasar': ['thukariyasar', 'thukriyasar'],
   'Baithwasiya': ['baithwasiya'], 'Jasarasar': ['jasarasar', 'jasrasar'], 'Sheruna': ['sheruna'],
 };
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-let redisClient = null;
-async function getRedis() {
-  if (redisClient) return redisClient;
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  try {
-    const { Redis } = await import('@upstash/redis');
-    redisClient = new Redis({ url, token });
-    return redisClient;
-  } catch {
-    return null;
-  }
-}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -45,26 +30,19 @@ export default async function handler(req, res) {
   const H = { Authorization: `Zoho-oauthtoken ${access_token}` };
   const ORG = `organization_id=${ORG_ID}`;
 
-  // Reuses the SAME Redis cache key as npdParkTransactions.js — if a park
-  // query already warmed the cache, this scan is nearly instant.
+  // Now uses the SAME guarded fetch as everything else — never caches a
+  // suspiciously small (i.e. likely-failed) result, and shares the daily
+  // 6am-reset TTL instead of a stale fixed 10-minute one.
+  const projectsResult = await fetchAllProjects(H, ORG);
+  const projects = projectsResult.data;
   const redis = await getRedis();
-  let projects;
-  if (redis) {
-    try { projects = await redis.get('npd:cache:projects'); } catch { /* fall through */ }
-  }
-  if (!projects) {
-    projects = [];
-    let page = 1;
-    while (true) {
-      const r = await fetch(`https://www.zohoapis.in/books/v3/projects?${ORG}&page=${page}&per_page=200`, { headers: H });
-      const d = await r.json();
-      if (d.code !== 0 || !d.projects?.length) break;
-      projects = projects.concat(d.projects);
-      if (!d.page_context?.has_more_page) break;
-      page++; if (page > 5) break;
-      await sleep(400);
-    }
-    if (redis) { try { await redis.set('npd:cache:projects', projects, { ex: 600 }); } catch { /* non-fatal */ } }
+
+  if (projects.length < 30) {
+    return res.status(502).json({
+      error: 'Upstream project data looks broken — refusing to scan on top of it',
+      detail: { projects_fetched: projects.length, cache_status: projectsResult.cache_status },
+      note: 'Expected roughly 57+ projects. If genuinely low, check Zoho auth/token status directly.',
+    });
   }
 
   // Every distinct customer_name ending in "solar park" — the structural

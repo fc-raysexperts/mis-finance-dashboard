@@ -1,79 +1,9 @@
 import { getAccessToken } from './_tokenCache.js';
-
-const PARK_KEYWORDS = {
-  'Jaisalmer':    ['jaisalmer'],
-  'Kolayat':      ['kolayat', 'koyalat', 'kolyat'],
-  'Dechu':        ['dechu'],
-  'Lunkaransar':  ['lunkaransar'],
-  'Napasar':      ['napasar'],
-  'Panchu':       ['panchu'],
-  'Pugal':        ['pugal'],
-  'Bhamatsar':    ['bhamatsar'],
-  'Sanchore':     ['sanchore', 'sachore'],
-  'Tosham':       ['tosham', 'tohsam'],
-  'SS Nagar':     ['ss nagar', 's s nagar'],
-  'Thukariyasar': ['thukariyasar', 'thukriyasar'],
-  'Baithwasiya':  ['baithwasiya'],
-  'Jasarasar':    ['jasarasar', 'jasrasar'],
-  'Sheruna':      ['sheruna'],
-};
-const NON_NPD_ACCOUNT_TYPES = new Set(['bank', 'cash']);
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Same classification rules as npdParkTransactions.js — kept in sync manually.
-const CLASSIFICATION_RULES = [
-  { test: n => n.includes('registration fee'), category: 'Registration Fees', head: 'IAUD' },
-  { test: n => n.includes('commission') || n.includes('brokerage'), category: 'Commission', head: 'IAUD' },
-  { test: n => n.includes('land registration charges'), category: 'Land Lease Registration', head: 'IAUD' },
-  { test: n => n.includes('lease registration'), category: 'Land Lease Registration', head: 'IAUD' },
-  { test: n => n.includes('land at'), category: 'Land Lease Expenses', head: 'CWIP' },
-  { test: n => n.includes('land lease'), category: 'Land Lease Expenses', head: 'IAUD' },
-  { test: n => n.includes('legal') || n.includes('professional') || n.includes('consultancy'), category: 'Legal & Professional Charges', head: 'IAUD' },
-  { test: n => n.includes('connectivity'), category: 'Connectivity Charges', head: 'IAUD' },
-  { test: n => n.includes('technical service'), category: 'Technical Service', head: 'IAUD', parkException: { 'Panchu': 'CWIP' } },
-  { test: n => n.includes('levelling') || n.includes('leveling'), category: 'Land Levelling & Survey', head: 'CWIP' },
-  { test: n => n.includes('purchase') || n.includes('civil work') || n.includes('transmission line') || n.includes('cwip') || n.includes('erection') || n.includes('installation') || n.includes('mms') || n.includes('module') || n.includes('inventory asset') || n.includes('other project expenses'), category: 'Purchase', head: 'CWIP' },
-  { test: n => n.includes('freight') || n.includes('cartage'), category: 'Rent & Other', head: 'CWIP' },
-  { test: n => n.includes('loading') || n.includes('unloading'), category: 'Rent & Other', head: 'CWIP' },
-  { test: n => n.includes('imprest'), category: 'Rent & Other', head: 'CWIP' },
-  { test: n => n.includes('transportation'), category: 'Rent & Other', head: 'CWIP' },
-  { test: n => n.includes('taxi') || n.includes('conveyance'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('boarding'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('rent'), category: 'Rent & Other', head: 'CWIP' },
-  { test: n => n.includes('other work'), category: 'Rent & Other', head: 'CWIP' },
-  { test: n => n.includes('site expenses'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('security service'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('labour charges') || n.includes('labor charges'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('project approval') || n.includes('govt fees') || n.includes('government fees'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('intangible assets') && !n.includes('development rights'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('intangible asset under development'), category: 'Land Lease Expenses', head: 'IAUD' },
-  { test: n => n.includes('consumption') || n.includes('cost of goods sold') || n.includes('work in progress'), category: 'Purchase', head: 'CWIP' },
-  { test: n => n.includes('testing fee') || n.includes('inspection charge'), category: 'Technical Service', head: 'CWIP' },
-  { test: n => n.includes('retention') || n.includes('security deposit'), category: 'Retention & Deposits', head: 'CWIP' },
-  { test: n => n.includes('inventories'), category: 'Purchase', head: 'CWIP' },
-  { test: n => n.includes('security manpower'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('vehicle running') || n.includes('vehicle maintenance'), category: 'Rent & Other', head: 'IAUD' },
-  { test: n => n.includes('travelling') || n.includes('traveling'), category: 'Rent & Other', head: 'IAUD' },
-];
-function classify(accountName, park) {
-  const n = (accountName || '').toLowerCase();
-  for (const rule of CLASSIFICATION_RULES) {
-    if (rule.test(n)) {
-      const head = (rule.parkException && rule.parkException[park]) || rule.head;
-      return { category: rule.category, head_grouping: head };
-    }
-  }
-  return { category: 'Unclassified', head_grouping: 'Unclassified' };
-}
-function classifyFlatAccount(flatAccountName) {
-  const specific = classify(flatAccountName, null);
-  if (specific.category !== 'Unclassified') return specific;
-  const n = (flatAccountName || '').toLowerCase();
-  if (n === 'capital work in progress') return { category: 'Purchase', head_grouping: 'CWIP' };
-  if (n === 'intangible assets - development rights') return { category: 'Land Lease Expenses', head_grouping: 'IAUD' };
-  if (n === 'intangible asset under development') return { category: 'Land Lease Expenses', head_grouping: 'IAUD' };
-  return { category: 'Unclassified', head_grouping: 'Unclassified' };
-}
+import {
+  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, sleep,
+  classify, classifyFlatAccount, matchParkProjects,
+  fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchProjectBills,
+} from './_npdShared.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -88,9 +18,23 @@ export default async function handler(req, res) {
   const H = { Authorization: `Zoho-oauthtoken ${access_token}` };
   const ORG = `organization_id=${ORG_ID}`;
 
-  const allCoaAccounts = await fetchAllAccounts(H, ORG);
-  const allGlAccounts = await fetchAllGlAccounts(H, ORG);
-  const allProjects = await fetchAllProjects(H, ORG);
+  // Now uses the SAME guarded, shared fetch functions as everything else —
+  // never caches a suspiciously small (likely-failed) result, and shares
+  // the daily 6am-reset TTL instead of a stale fixed 10-minute one.
+  const accountsResult = await fetchAllAccounts(H, ORG);
+  const glResult = await fetchAllGlAccounts(H, ORG);
+  const projectsResult = await fetchAllProjects(H, ORG);
+  const allCoaAccounts = accountsResult.data;
+  const allGlAccounts = glResult.data;
+  const allProjects = projectsResult.data;
+
+  if (allCoaAccounts.length < 1000 || allGlAccounts.length < 1000 || allProjects.length < 30) {
+    return res.status(502).json({
+      error: 'Upstream data looks broken — refusing to scan on top of it',
+      detail: { coa_accounts_fetched: allCoaAccounts.length, gl_accounts_fetched: allGlAccounts.length, projects_fetched: allProjects.length },
+      note: 'Expected roughly 3300+ CoA accounts, 3700+ GL accounts, 57+ projects. If genuinely low, check Zoho auth/token status directly.',
+    });
+  }
 
   // Grouped by distinct (account_name + category) pair, across ALL parks —
   // so the same unclassified account name showing up in 5 different parks
@@ -98,7 +42,6 @@ export default async function handler(req, res) {
   const unclassifiedGrouped = {};
 
   for (const [park, keywords] of Object.entries(PARK_KEYWORDS)) {
-    // CoA channel
     const parkAccounts = allCoaAccounts.filter(a => {
       if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
       const cn = (a.account_name || '').toLowerCase();
@@ -119,21 +62,10 @@ export default async function handler(req, res) {
       }
     }
 
-    // Bills-fallback channel
-    const matchedProjects = allProjects.filter(p => {
-      const customerName = (p.customer_name || '').toLowerCase();
-      const projectName = (p.project_name || '').toLowerCase();
-      const isRealParkCustomer = keywords.some(kw => customerName.includes(kw)) && customerName.includes('solar park');
-      const isNpdDesignated = projectName.includes('npd');
-      const tokens = projectName.split(/[^a-z0-9]+/).filter(Boolean);
-      const validSuffixes = new Set(['bw', 'land', 'mcr', 'pss', 'tl']);
-      const hasValidComponentSuffix = tokens.some(t => validSuffixes.has(t));
-      return isRealParkCustomer && isNpdDesignated && hasValidComponentSuffix;
-    });
+    const matchedProjects = matchParkProjects(allProjects, keywords);
     for (const proj of matchedProjects) {
-      const br = await fetch(`https://www.zohoapis.in/books/v3/bills?${ORG}&project_id=${proj.project_id}&per_page=200`, { headers: H });
-      const bd = await br.json();
-      for (const b of (bd.bills || [])) {
+      const bills = await fetchProjectBills(H, ORG, proj.project_id);
+      for (const b of bills) {
         const dr = await fetch(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, { headers: H });
         const dd = await dr.json();
         for (const li of (dd.bill?.line_items || [])) {
@@ -163,67 +95,4 @@ export default async function handler(req, res) {
     total_unclassified_amount: Math.round(results.reduce((s, r) => s + r.total_amount, 0) * 100) / 100,
     findings: results,
   });
-}
-
-// ── Same fetch helpers as npdParkTransactions.js, with caching ────────────
-async function getRedis() {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  try {
-    const { Redis } = await import('@upstash/redis');
-    return new Redis({ url, token });
-  } catch {
-    return null;
-  }
-}
-async function fetchAllAccounts(H, ORG) {
-  const redis = await getRedis();
-  if (redis) { try { const c = await redis.get('npd:cache:coa_accounts'); if (c) return c; } catch {} }
-  let all = [], page = 1, lastFirstId = null;
-  while (true) {
-    const r = await fetch(`https://www.zohoapis.in/books/v3/chartofaccounts?${ORG}&page=${page}&per_page=1000&filter_by=AccountType.All`, { headers: H });
-    const d = await r.json();
-    const returned = d.chartofaccounts?.length || 0;
-    const firstId = d.chartofaccounts?.[0]?.account_id || null;
-    if (d.code !== 0 || returned === 0) break;
-    if (firstId && firstId === lastFirstId) break;
-    all = all.concat(d.chartofaccounts); lastFirstId = firstId;
-    page++; if (page > 15) break;
-    await sleep(400);
-  }
-  if (redis) { try { await redis.set('npd:cache:coa_accounts', all, { ex: 600 }); } catch {} }
-  return all;
-}
-async function fetchAllGlAccounts(H, ORG) {
-  const redis = await getRedis();
-  if (redis) { try { const c = await redis.get('npd:cache:gl_accounts'); if (c) return c; } catch {} }
-  let all = [], page = 1;
-  while (true) {
-    const r = await fetch(`https://www.zohoapis.in/books/v3/reports/generalledger?${ORG}&from_date=2020-04-01&to_date=2026-08-04&page=${page}&per_page=200`, { headers: H });
-    const d = await r.json();
-    if (d.code !== 0 || !d.generalledger?.length) break;
-    all = all.concat(d.generalledger);
-    if (!d.page_context?.has_more_page) break;
-    page++; if (page > 5) break;
-    await sleep(400);
-  }
-  if (redis) { try { await redis.set('npd:cache:gl_accounts', all, { ex: 600 }); } catch {} }
-  return all;
-}
-async function fetchAllProjects(H, ORG) {
-  const redis = await getRedis();
-  if (redis) { try { const c = await redis.get('npd:cache:projects'); if (c) return c; } catch {} }
-  let all = [], page = 1;
-  while (true) {
-    const r = await fetch(`https://www.zohoapis.in/books/v3/projects?${ORG}&page=${page}&per_page=200`, { headers: H });
-    const d = await r.json();
-    if (d.code !== 0 || !d.projects?.length) break;
-    all = all.concat(d.projects);
-    if (!d.page_context?.has_more_page) break;
-    page++; if (page > 5) break;
-    await sleep(400);
-  }
-  if (redis) { try { await redis.set('npd:cache:projects', all, { ex: 600 }); } catch {} }
-  return all;
 }
