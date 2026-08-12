@@ -77,7 +77,7 @@ export default function NPD() {
         fetch(`/api/npdAllParksSummary?${periodQuery}&parks=${chunk.map(encodeURIComponent).join(',')}`)
           .then(r => r.json())
           .then(d => {
-            if (d.error) throw new Error(d.error);
+            if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
             if (!cancelled) setSummaryChunksLoaded(n => n + 1);
             return d;
           })
@@ -100,7 +100,7 @@ export default function NPD() {
       .then(r => r.json())
       .then(d => {
         if (cancelled) return;
-        if (d.error) throw new Error(d.error);
+        if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
         setParkDetail(d);
       })
       .catch(e => { if (!cancelled) setParkDetailError(e.message); })

@@ -128,14 +128,44 @@ export function getSecondsUntilNext6AMIST() {
   return Math.floor((next6amUTC.getTime() - nowUTC) / 1000);
 }
 
+// ── Rate-limit-aware Zoho fetch wrapper. Zoho enforces aggressive OAuth
+//    token rate limiting (20-60 min cooldowns on repeated requests) —
+//    documented from early in this investigation, and directly implicated
+//    in an incident where heavy same-day testing (curl tests, redeploys,
+//    cron triggers, diagnostic scans) caused a fast 2-second 500 crash on
+//    one attempt, followed by a slow-but-successful 79-second retry, then
+//    full recovery after waiting. This wrapper catches Zoho's rate-limit
+//    response specifically (HTTP 429, or a message mentioning "too many
+//    requests") and throws a clear, distinguishable error — so a future
+//    incident produces "Zoho is rate-limiting requests, wait and retry" in
+//    the response instead of an opaque crash with no explanation. ─────────
+export class ZohoRateLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ZohoRateLimitError';
+  }
+}
+
+export async function fetchZohoJson(url, H) {
+  const r = await fetch(url, { headers: H });
+  const d = await r.json();
+  const messageText = (d.message || '').toLowerCase();
+  if (r.status === 429 || messageText.includes('too many request') || messageText.includes('rate limit')) {
+    throw new ZohoRateLimitError(
+      `Zoho API rate limit hit (HTTP ${r.status}): "${d.message || 'no message provided'}". ` +
+      `Zoho documented cooldowns run 20-60 minutes — wait before retrying rather than immediately hammering it again.`
+    );
+  }
+  return d;
+}
+
 // ── Cached fetch helpers ────────────────────────────────────────────────
 export async function fetchAllAccounts(H, ORG) {
   const redis = await getRedis();
   if (redis) { try { const c = await redis.get('npd:cache:coa_accounts'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
   let all = [], page = 1, lastFirstId = null;
   while (true) {
-    const r = await fetch(`https://www.zohoapis.in/books/v3/chartofaccounts?${ORG}&page=${page}&per_page=1000&filter_by=AccountType.All`, { headers: H });
-    const d = await r.json();
+    const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/chartofaccounts?${ORG}&page=${page}&per_page=1000&filter_by=AccountType.All`, H);
     const returned = d.chartofaccounts?.length || 0;
     const firstId = d.chartofaccounts?.[0]?.account_id || null;
     if (d.code !== 0 || returned === 0) break;
@@ -161,8 +191,7 @@ export async function fetchAllGlAccounts(H, ORG) {
   if (redis) { try { const c = await redis.get('npd:cache:gl_accounts'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
   let all = [], page = 1;
   while (true) {
-    const r = await fetch(`https://www.zohoapis.in/books/v3/reports/generalledger?${ORG}&from_date=2020-04-01&to_date=2026-08-04&page=${page}&per_page=200`, { headers: H });
-    const d = await r.json();
+    const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/reports/generalledger?${ORG}&from_date=2020-04-01&to_date=2026-08-04&page=${page}&per_page=200`, H);
     if (d.code !== 0 || !d.generalledger?.length) break;
     all = all.concat(d.generalledger);
     if (!d.page_context?.has_more_page) break;
@@ -181,8 +210,7 @@ export async function fetchAllProjects(H, ORG) {
   if (redis) { try { const c = await redis.get('npd:cache:projects'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
   let all = [], page = 1;
   while (true) {
-    const r = await fetch(`https://www.zohoapis.in/books/v3/projects?${ORG}&page=${page}&per_page=200`, { headers: H });
-    const d = await r.json();
+    const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/projects?${ORG}&page=${page}&per_page=200`, H);
     if (d.code !== 0 || !d.projects?.length) break;
     all = all.concat(d.projects);
     if (!d.page_context?.has_more_page) break;
@@ -202,8 +230,7 @@ export async function fetchAccountTransactions(H, ORG, accountId, fromDate, toDa
     criteria_string: '1',
   }));
   const url = `https://www.zohoapis.in/books/v3/reports/accounttransaction?${ORG}&from_date=${fromDate}&to_date=${toDate}&rule=${rule}`;
-  const r = await fetch(url, { headers: H });
-  const d = await r.json();
+  const d = await fetchZohoJson(url, H);
   const entries = d.account_transactions || [];
   let found = [];
   for (const entry of entries) {
@@ -215,8 +242,7 @@ export async function fetchAccountTransactions(H, ORG, accountId, fromDate, toDa
 }
 
 export async function fetchProjectBills(H, ORG, projectId) {
-  const r = await fetch(`https://www.zohoapis.in/books/v3/bills?${ORG}&project_id=${projectId}&per_page=200`, { headers: H });
-  const d = await r.json();
+  const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills?${ORG}&project_id=${projectId}&per_page=200`, H);
   return d.bills || [];
 }
 

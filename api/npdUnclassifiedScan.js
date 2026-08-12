@@ -2,7 +2,7 @@ import { getAccessToken } from './_tokenCache.js';
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, sleep,
   classify, classifyFlatAccount, matchParkProjects,
-  fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchProjectBills,
+  fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchProjectBills, fetchZohoJson, ZohoRateLimitError,
 } from './_npdShared.js';
 
 export default async function handler(req, res) {
@@ -18,21 +18,22 @@ export default async function handler(req, res) {
   const H = { Authorization: `Zoho-oauthtoken ${access_token}` };
   const ORG = `organization_id=${ORG_ID}`;
 
-  // Now uses the SAME guarded, shared fetch functions as everything else —
-  // never caches a suspiciously small (likely-failed) result, and shares
-  // the daily 6am-reset TTL instead of a stale fixed 10-minute one.
-  const accountsResult = await fetchAllAccounts(H, ORG);
-  const glResult = await fetchAllGlAccounts(H, ORG);
-  const projectsResult = await fetchAllProjects(H, ORG);
-  const allCoaAccounts = accountsResult.data;
-  const allGlAccounts = glResult.data;
-  const allProjects = projectsResult.data;
+  try {
+    // Now uses the SAME guarded, shared fetch functions as everything else —
+    // never caches a suspiciously small (likely-failed) result, and shares
+    // the daily 6am-reset TTL instead of a stale fixed 10-minute one.
+    const accountsResult = await fetchAllAccounts(H, ORG);
+    const glResult = await fetchAllGlAccounts(H, ORG);
+    const projectsResult = await fetchAllProjects(H, ORG);
+    const allCoaAccounts = accountsResult.data;
+    const allGlAccounts = glResult.data;
+    const allProjects = projectsResult.data;
 
-  if (allCoaAccounts.length < 1000 || allGlAccounts.length < 1000 || allProjects.length < 30) {
-    return res.status(502).json({
-      error: 'Upstream data looks broken — refusing to scan on top of it',
-      detail: { coa_accounts_fetched: allCoaAccounts.length, gl_accounts_fetched: allGlAccounts.length, projects_fetched: allProjects.length },
-      note: 'Expected roughly 3300+ CoA accounts, 3700+ GL accounts, 57+ projects. If genuinely low, check Zoho auth/token status directly.',
+    if (allCoaAccounts.length < 1000 || allGlAccounts.length < 1000 || allProjects.length < 30) {
+      return res.status(502).json({
+        error: 'Upstream data looks broken — refusing to scan on top of it',
+        detail: { coa_accounts_fetched: allCoaAccounts.length, gl_accounts_fetched: allGlAccounts.length, projects_fetched: allProjects.length },
+        note: 'Expected roughly 3300+ CoA accounts, 3700+ GL accounts, 57+ projects. If genuinely low, check Zoho auth/token status directly.',
     });
   }
 
@@ -66,8 +67,7 @@ export default async function handler(req, res) {
     for (const proj of matchedProjects) {
       const bills = await fetchProjectBills(H, ORG, proj.project_id);
       for (const b of bills) {
-        const dr = await fetch(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, { headers: H });
-        const dd = await dr.json();
+        const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
         for (const li of (dd.bill?.line_items || [])) {
           const cls = classifyFlatAccount(li.account_name);
           if (cls.category === 'Unclassified') {
@@ -90,9 +90,15 @@ export default async function handler(req, res) {
     total_amount: Math.round(g.total * 100) / 100,
   })).sort((a, b) => b.total_amount - a.total_amount);
 
-  return res.status(200).json({
-    total_distinct_unclassified_account_names: results.length,
-    total_unclassified_amount: Math.round(results.reduce((s, r) => s + r.total_amount, 0) * 100) / 100,
-    findings: results,
-  });
+    return res.status(200).json({
+      total_distinct_unclassified_account_names: results.length,
+      total_unclassified_amount: Math.round(results.reduce((s, r) => s + r.total_amount, 0) * 100) / 100,
+      findings: results,
+    });
+  } catch (err) {
+    if (err instanceof ZohoRateLimitError) {
+      return res.status(429).json({ error: 'RATE_LIMITED', message: err.message });
+    }
+    return res.status(500).json({ error: err.message, stack: err.stack });
+  }
 }

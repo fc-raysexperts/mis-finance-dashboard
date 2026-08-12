@@ -1,7 +1,7 @@
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES,
   classify, classifyFlatAccount, matchParkProjects,
-  getRedis, getSecondsUntilNext6AMIST,
+  getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
   processBatched, getZohoAuth,
 } from './_npdShared.js';
@@ -10,8 +10,7 @@ async function fetchBillDetailCached(H, ORG, billId) {
   const redis = await getRedis();
   const cacheKey = `npd:cache:bill_detail:${billId}`;
   if (redis) { try { const c = await redis.get(cacheKey); if (c) return c; } catch { /* fall through */ } }
-  const dr = await fetch(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, { headers: H });
-  const dd = await dr.json();
+  const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, H);
   const lineItems = dd.bill?.line_items || [];
   if (redis) { try { await redis.set(cacheKey, lineItems, { ex: getSecondsUntilNext6AMIST() * 7 }); } catch { /* non-fatal — bill contents are stable, a week's cache is safe */ } }
   return lineItems;
@@ -123,6 +122,9 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ...result, cron_response_time_ms: Date.now() - startTime, cached: !!redis });
   } catch (err) {
+    if (err instanceof ZohoRateLimitError) {
+      return res.status(429).json({ error: 'RATE_LIMITED', message: err.message, park });
+    }
     return res.status(500).json({ error: err.message, stack: err.stack, park });
   }
 }

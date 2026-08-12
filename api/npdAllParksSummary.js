@@ -1,7 +1,7 @@
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, sleep,
   classify, classifyFlatAccount, matchParkProjects,
-  getRedis, getSecondsUntilNext6AMIST,
+  getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
   processBatched, resolvePeriod, getZohoAuth,
 } from './_npdShared.js';
@@ -12,8 +12,7 @@ async function fetchBillDetailCached(H, ORG, billId) {
   if (redis) {
     try { const c = await redis.get(cacheKey); if (c) return c; } catch { /* fall through */ }
   }
-  const dr = await fetch(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, { headers: H });
-  const dd = await dr.json();
+  const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, H);
   const lineItems = dd.bill?.line_items || [];
   if (redis) { try { await redis.set(cacheKey, lineItems, { ex: getSecondsUntilNext6AMIST() * 7 }); } catch { /* non-fatal */ } }
   return lineItems;
@@ -180,6 +179,9 @@ export default async function handler(req, res) {
       sum: sumRow,
     });
   } catch (err) {
+    if (err instanceof ZohoRateLimitError) {
+      return res.status(429).json({ error: 'RATE_LIMITED', message: err.message });
+    }
     return res.status(500).json({ error: err.message, stack: err.stack });
   }
 }

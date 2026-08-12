@@ -2,7 +2,7 @@ import { getAccessToken } from './_tokenCache.js';
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, sleep,
   classify, classifyFlatAccount, matchParkProjects,
-  getRedis, getSecondsUntilNext6AMIST,
+  getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
   processBatched, resolvePeriod,
 } from './_npdShared.js';
@@ -175,8 +175,7 @@ export default async function handler(req, res) {
     }
 
     const billResults = await processBatched(allNewBills, 3, 400, async ({ bill: b, projectName }) => {
-      const dr = await fetch(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, { headers: H });
-      const dd = await dr.json();
+      const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
       billDetailCallsMade++;
       const lineItems = dd.bill?.line_items || [];
       if (lineItems.length === 0) {
@@ -238,6 +237,9 @@ export default async function handler(req, res) {
       transactions: allTxns,
     });
   } catch (err) {
+    if (err instanceof ZohoRateLimitError) {
+      return res.status(429).json({ error: 'RATE_LIMITED', message: err.message });
+    }
     return res.status(500).json({ error: err.message, stack: err.stack });
   }
 }
