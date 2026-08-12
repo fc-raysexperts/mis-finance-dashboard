@@ -249,7 +249,29 @@ export function TierBreakdownBars({ items }) {
   );
 }
 
-// ── Chart 10: Revenue Potential across all parks — alternating bars, labels ──
+// ── Chart 9b: NPD tab — stacked CWIP/IAUD cost per park ──────────────────────
+export function NPDParkCostChart({ parks, cwipValues, iaudValues }) {
+  const data = parks.map((p, i) => ({ name: p, IAUD: iaudValues[i] || 0, CWIP: cwipValues[i] || 0 }));
+  const CWIP_COLOR = '#f59e0b'; // amber — construction-phase spend, drawn on top
+  const IAUD_COLOR = '#60a5fa'; // blue (MID_REVENUE) — development-phase spend, drawn below
+  return (
+    <div className="chart-card">
+      <div className="chart-card-title">Total Cost by Park — CWIP vs IAUD</div>
+      <ResponsiveContainer width="100%" height={340}>
+        <BarChart data={data} margin={{ top: 8, right: 20, left: 0, bottom: 60 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+          <XAxis dataKey="name" interval={0} angle={-35} textAnchor="end"
+            tick={{ fontSize: 11, fill: '#475569' }} height={70} />
+          <YAxis tickFormatter={tickFmt} tick={{ fontSize: 11, fill: '#475569' }} width={55} />
+          <Tooltip content={<CustomTooltip />} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar dataKey="IAUD" stackId="cost" fill={IAUD_COLOR} />
+          <Bar dataKey="CWIP" stackId="cost" fill={CWIP_COLOR} radius={[4, 4, 0, 0]} maxBarSize={42} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 export function RevenuePotentialChart({ parks }) {
   // parks: [{ name, potential }] — sorted descending by potential
   const sorted = [...parks].sort((a, b) => b.potential - a.potential);

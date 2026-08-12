@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fmt } from '../utils.js';
+import { NPDParkCostChart } from './Charts.jsx';
 
 const PARK_LIST = [
   'Jaisalmer', 'Kolayat', 'Dechu', 'Lunkaransar', 'Napasar', 'Panchu', 'Pugal',
@@ -12,6 +13,11 @@ const CATEGORIES = [
   'Land Levelling & Survey', 'Rent & Other', 'Retention & Deposits',
 ];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Vertical divider after every 3rd park column — computed from position, not
+// a hardcoded park-name list, so this automatically keeps working as new
+// parks get added via the discovery system, with zero further changes.
+const parkColStyle = (index) => (index + 1) % 3 === 0 ? { borderRight: '1.5px solid #94a3b8' } : {};
 
 function buildPeriodQuery({ periodType, fy, quarter, year, month }) {
   if (periodType === 'yearly') return `period=yearly&fy=${fy}`;
@@ -85,9 +91,6 @@ export default function NPD() {
     )
       .then(settledResults => {
         if (cancelled) return;
-        // Use whatever succeeded, even if some chunks failed — a single
-        // failing chunk (e.g. hit a rate limit) shouldn't throw away the
-        // other 3 that worked fine.
         const successful = settledResults
           .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
           .filter(x => x.result.status === 'fulfilled');
@@ -113,13 +116,6 @@ export default function NPD() {
   }, [periodQuery]);
 
   useEffect(() => {
-    // Wait for Summary to finish first, rather than racing it. Otherwise the
-    // default park (Dechu) — which also lands in one of the summary chunks —
-    // would get computed live, redundantly, by BOTH requests simultaneously
-    // on every fresh page load, doubling Zoho load for the heaviest park
-    // right when rate-limit headroom matters most. Once Summary finishes,
-    // it's already cached this park's full data as a byproduct, so this
-    // fetch should land on a warm cache instead of duplicating the work.
     if (summaryLoading) return;
     let cancelled = false;
     setParkDetailLoading(true); setParkDetailError(null);
@@ -199,24 +195,24 @@ export default function NPD() {
               <thead>
                 <tr>
                   <th className="col-head" colSpan={2}>Head Grouping</th>
-                  {PARK_LIST.map(p => <th key={p} className="col-num">{p}</th>)}
+                  {PARK_LIST.map((p, i) => <th key={p} className="col-num" style={parkColStyle(i)}>{p}</th>)}
                   <th className="col-num col-total-hd">Sum</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td className="col-head" colSpan={2}>CWIP</td>
-                  {PARK_LIST.map(p => <td key={p} className="col-num">{fmt(parks[p]?.cwip_total || 0)}</td>)}
+                  {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.cwip_total || 0)}</td>)}
                   <td className="col-num col-total-val">{fmt(sum?.cwip_total || 0)}</td>
                 </tr>
                 <tr>
                   <td className="col-head" colSpan={2}>IAUD</td>
-                  {PARK_LIST.map(p => <td key={p} className="col-num">{fmt(parks[p]?.iaud_total || 0)}</td>)}
+                  {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.iaud_total || 0)}</td>)}
                   <td className="col-num col-total-val">{fmt(sum?.iaud_total || 0)}</td>
                 </tr>
                 <tr className="row-section-total">
                   <td className="col-head" colSpan={2}>Total</td>
-                  {PARK_LIST.map(p => <td key={p} className="col-num">{fmt(parks[p]?.total || 0)}</td>)}
+                  {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.total || 0)}</td>)}
                   <td className="col-num col-total-val">{fmt(sum?.total || 0)}</td>
                 </tr>
               </tbody>
@@ -228,7 +224,7 @@ export default function NPD() {
               <thead>
                 <tr>
                   <th className="col-head" colSpan={2}>Category</th>
-                  {PARK_LIST.map(p => <th key={p} className="col-num">{p}</th>)}
+                  {PARK_LIST.map((p, i) => <th key={p} className="col-num" style={parkColStyle(i)}>{p}</th>)}
                   <th className="col-num col-total-hd">Sum</th>
                 </tr>
               </thead>
@@ -236,25 +232,31 @@ export default function NPD() {
                 {CATEGORIES.map(cat => (
                   <tr key={cat}>
                     <td className="col-head" colSpan={2}>{cat}</td>
-                    {PARK_LIST.map(p => <td key={p} className="col-num">{fmt(parks[p]?.category_totals?.[cat] || 0)}</td>)}
+                    {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.category_totals?.[cat] || 0)}</td>)}
                     <td className="col-num col-total-val">{fmt(sum?.category_totals?.[cat] || 0)}</td>
                   </tr>
                 ))}
                 {sum?.category_totals?.['Unclassified'] > 0 && (
                   <tr className="npd-unclassified-row">
                     <td className="col-head" colSpan={2}>Unclassified</td>
-                    {PARK_LIST.map(p => <td key={p} className="col-num">{fmt(parks[p]?.category_totals?.['Unclassified'] || 0)}</td>)}
+                    {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.category_totals?.['Unclassified'] || 0)}</td>)}
                     <td className="col-num col-total-val">{fmt(sum.category_totals['Unclassified'])}</td>
                   </tr>
                 )}
                 <tr className="row-section-total">
                   <td className="col-head" colSpan={2}>Total</td>
-                  {PARK_LIST.map(p => <td key={p} className="col-num">{fmt(parks[p]?.total || 0)}</td>)}
+                  {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.total || 0)}</td>)}
                   <td className="col-num col-total-val">{fmt(sum?.total || 0)}</td>
                 </tr>
               </tbody>
             </table>
           </div>
+
+          <NPDParkCostChart
+            parks={PARK_LIST}
+            cwipValues={PARK_LIST.map(p => parks[p]?.cwip_total || 0)}
+            iaudValues={PARK_LIST.map(p => parks[p]?.iaud_total || 0)}
+          />
         </>
       )}
 
@@ -301,7 +303,7 @@ export default function NPD() {
           )}
 
           <div className="tbl-wrap npd-txn-scroll" style={{ marginTop: 14 }}>
-            <table className="investor-cmp-table">
+            <table className="investor-cmp-table npd-detail-table">
               <thead>
                 <tr>
                   <th>Date</th><th>Vendor</th><th>Type</th><th>Bill #</th>
