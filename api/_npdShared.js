@@ -310,6 +310,32 @@ export function resolvePeriod(query) {
   return { error: `period must be one of: total, yearly, quarterly, monthly` };
 }
 
+// ── Derive a narrower period's summary from an already-cached Total-Till-
+//    Date dataset, by filtering the already-fetched transactions in memory.
+//    This is the key insight that avoids re-hitting Zoho for every period
+//    selection: once we have the full transaction list (with real dates on
+//    every entry) for a park, ANY narrower date range can be computed
+//    entirely locally — zero new API calls needed. ─────────────────────────
+export function derivePeriodFromFullData(fullData, fromDate, toDate) {
+  const filteredTxns = (fullData.transactions || []).filter(t => (t.date || '') >= fromDate && (t.date || '') <= toDate);
+  const total = Math.round(filteredTxns.reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const cwipTotal = Math.round(filteredTxns.filter(t => t.head_grouping === 'CWIP').reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const iaudTotal = Math.round(filteredTxns.filter(t => t.head_grouping === 'IAUD').reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const categoryTotals = {};
+  for (const t of filteredTxns) categoryTotals[t.category] = Math.round(((categoryTotals[t.category] || 0) + t.amount) * 100) / 100;
+  const unclassifiedCount = filteredTxns.filter(t => t.head_grouping === 'Unclassified').length;
+  // account_count for a narrow window = distinct accounts actually touched
+  // within it, not the park's total account count (which is period-agnostic)
+  const distinctAccountsInWindow = new Set(filteredTxns.map(t => t.account_name).filter(Boolean)).size;
+  return {
+    account_count: distinctAccountsInWindow,
+    transaction_count: filteredTxns.length,
+    total, cwip_total: cwipTotal, iaud_total: iaudTotal,
+    category_totals: categoryTotals, unclassified_count: unclassifiedCount,
+    transactions: filteredTxns,
+  };
+}
+
 export async function getZohoAuth() {
   const { getAccessToken } = await import('./_tokenCache.js');
   const env = {

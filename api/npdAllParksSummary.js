@@ -3,7 +3,7 @@ import {
   classify, classifyFlatAccount, matchParkProjects,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
-  processBatched, resolvePeriod, getZohoAuth,
+  processBatched, resolvePeriod, getZohoAuth, derivePeriodFromFullData,
 } from './_npdShared.js';
 
 async function fetchBillDetailCached(H, ORG, billId) {
@@ -94,6 +94,30 @@ export default async function handler(req, res) {
           category_totals: cachedParkFull.category_totals ?? {},
         };
         continue; // skip all live computation for this park entirely
+      }
+
+      // FIXED — the big one: if this exact period isn't cached, try
+      // deriving it from the already-cached Total Till Date data instead of
+      // going live. We already have every transaction with real dates on
+      // it; a narrower period is just a filter away, entirely in-memory,
+      // zero new Zoho calls. Selecting a different period should never have
+      // required a fresh live fetch when we'd already fetched everything.
+      if (periodLabel !== 'Total Till Date') {
+        const cachedTotal = redis ? await (async () => {
+          try { return await redis.get(`npd:cache:park_full:${park}:Total Till Date`); } catch { return null; }
+        })() : null;
+        if (cachedTotal) {
+          const derived = derivePeriodFromFullData(cachedTotal, fromDate, toDate);
+          parkSummaries[park] = {
+            account_count: derived.account_count,
+            cwip_total: derived.cwip_total,
+            iaud_total: derived.iaud_total,
+            total: derived.total,
+            unclassified_count: derived.unclassified_count,
+            category_totals: derived.category_totals,
+          };
+          continue; // derived locally — no live computation needed
+        }
       }
 
       const keywords = PARK_KEYWORDS[park];

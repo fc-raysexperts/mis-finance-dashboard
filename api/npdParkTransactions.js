@@ -4,7 +4,7 @@ import {
   classify, classifyFlatAccount, matchParkProjects,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
-  processBatched, resolvePeriod,
+  processBatched, resolvePeriod, derivePeriodFromFullData,
 } from './_npdShared.js';
 
 // Parks that currently rely 100% on Project-tagged Bills (zero CoA presence
@@ -94,6 +94,25 @@ export default async function handler(req, res) {
       const cached = await cacheRedis.get(`npd:cache:park_full:${park}:${periodLabel}`);
       if (cached) {
         return res.status(200).json({ ...cached, served_from_summary_cache: true, response_time_ms: Date.now() - startTime });
+      }
+      // FIXED — same fix as npdAllParksSummary.js: if this exact period
+      // isn't cached, derive it from the already-cached Total Till Date
+      // data (every transaction, with real dates, already sitting there)
+      // instead of going live. Selecting a different period should never
+      // have required a fresh fetch when we already had everything.
+      if (periodLabel !== 'Total Till Date') {
+        const cachedTotal = await cacheRedis.get(`npd:cache:park_full:${park}:Total Till Date`);
+        if (cachedTotal) {
+          const derived = derivePeriodFromFullData(cachedTotal, fromDate, toDate);
+          return res.status(200).json({
+            park, period_label: periodLabel, from_date: fromDate, to_date: toDate,
+            account_count: derived.account_count, transaction_count: derived.transaction_count,
+            total: derived.total, cwip_total: derived.cwip_total, iaud_total: derived.iaud_total,
+            category_totals: derived.category_totals, unclassified_count: derived.unclassified_count,
+            transactions: derived.transactions,
+            derived_from_total_cache: true, response_time_ms: Date.now() - startTime,
+          });
+        }
       }
     } catch { /* fall through to live computation */ }
   }
