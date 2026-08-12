@@ -141,7 +141,7 @@ export default async function handler(req, res) {
         return glMatch && (parseFloat(glMatch.debit_total) || 0) !== 0;
       });
 
-    const accountResults = await processBatched(parkAccounts, 3, 400, async (acct) => {
+    const accountResults = await processBatched(parkAccounts, 3, 1500, async (acct) => {
       const txns = await fetchAccountTransactions(H, ORG, acct.account_id, fromDate, toDate);
       const cls = classify(acct.account_name, park, customClassifications);
       return txns.map(t => ({
@@ -174,7 +174,7 @@ export default async function handler(req, res) {
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
 
-    const billResults = await processBatched(allNewBills, 3, 400, async ({ bill: b, projectName }) => {
+    const billResults = await processBatched(allNewBills, 3, 1500, async ({ bill: b, projectName }) => {
       const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
       billDetailCallsMade++;
       const lineItems = dd.bill?.line_items || [];
@@ -210,6 +210,23 @@ export default async function handler(req, res) {
 
     const coaTransitionWarning = await checkCoaTransition(park, parkAccounts.length);
     const pendingNewParkReview = await checkPendingNewParks();
+
+    // Write back to the shared cache — previously this endpoint only ever
+    // READ from it, meaning a park visited directly (before Summary ever
+    // cached it) did all this live work and then discarded the opportunity
+    // to reuse it, for itself or for Summary later. Now all three paths
+    // (cron, Summary, direct Park Detail) mutually benefit from each other.
+    if (cacheRedis) {
+      try {
+        await cacheRedis.set(`npd:cache:park_full:${park}:${periodLabel}`, {
+          park, from_date: fromDate, to_date: toDate, period_label: periodLabel,
+          account_count: parkAccounts.length, transaction_count: allTxns.length,
+          total, cwip_total: cwipTotal, iaud_total: iaudTotal,
+          category_totals: categoryTotals, unclassified_count: unclassifiedEntries.length,
+          transactions: allTxns, cached_at: new Date().toISOString(),
+        }, { ex: getSecondsUntilNext6AMIST() });
+      } catch { /* non-fatal — response still returns correctly even if this write fails */ }
+    }
 
     return res.status(200).json({
       park,

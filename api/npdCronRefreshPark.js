@@ -65,7 +65,7 @@ export default async function handler(req, res) {
     });
 
     let allTxns = [];
-    const accountResults = await processBatched(parkAccounts, 3, 400, async (acct) => {
+    const accountResults = await processBatched(parkAccounts, 3, 1500, async (acct) => {
       const txns = await fetchAccountTransactions(H, ORG, acct.account_id, fromDate, toDate);
       const cls = classify(acct.account_name, park, customClassifications);
       return txns.map(t => ({
@@ -86,7 +86,7 @@ export default async function handler(req, res) {
       const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && (b.date || '') >= fromDate && (b.date || '') <= toDate);
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
-    const billResults = await processBatched(allNewBills, 3, 400, async ({ bill: b, projectName }) => {
+    const billResults = await processBatched(allNewBills, 3, 1500, async ({ bill: b, projectName }) => {
       const lineItems = await fetchBillDetailCached(H, ORG, b.bill_id);
       if (lineItems.length === 0) {
         return [{ date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: null, category: 'Unclassified', head_grouping: 'Unclassified', source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0 }];
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
     };
 
     if (redis) {
-      try { await redis.set(`npd:cache:park_full:${park}`, result, { ex: getSecondsUntilNext6AMIST() + 3600 }); } // small buffer past next 6am in case cron runs a bit late
+      try { await redis.set(`npd:cache:park_full:${park}:Total Till Date`, result, { ex: getSecondsUntilNext6AMIST() + 3600 }); } // small buffer past next 6am in case cron runs a bit late
       catch { /* non-fatal — endpoint still returns the fresh result even if caching fails */ }
     }
 
