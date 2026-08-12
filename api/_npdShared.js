@@ -128,17 +128,16 @@ export function getSecondsUntilNext6AMIST() {
   return Math.floor((next6amUTC.getTime() - nowUTC) / 1000);
 }
 
-// ── Rate-limit-aware Zoho fetch wrapper. Zoho enforces aggressive OAuth
-//    token rate limiting (20-60 min cooldowns on repeated requests) —
-//    documented from early in this investigation, and directly implicated
-//    in an incident where heavy same-day testing (curl tests, redeploys,
-//    cron triggers, diagnostic scans) caused a fast 2-second 500 crash on
-//    one attempt, followed by a slow-but-successful 79-second retry, then
-//    full recovery after waiting. This wrapper catches Zoho's rate-limit
-//    response specifically (HTTP 429, or a message mentioning "too many
-//    requests") and throws a clear, distinguishable error — so a future
-//    incident produces "Zoho is rate-limiting requests, wait and retry" in
-//    the response instead of an opaque crash with no explanation. ─────────
+// ── Rate-limit-aware Zoho fetch wrapper. Zoho's OWN official API docs
+//    (zoho.com/books/api/v3/introduction/) confirm: 100 requests per minute
+//    per organization, ROLLING window — not a long fixed lockout. Confirmed
+//    directly: the real error message Zoho returns ("...blocked as it have
+//    exceeded the maximum number of requests per minute...") matches Zoho's
+//    documented error code 44 exactly. A short pause (a couple of minutes)
+//    should be enough for the rolling window to clear — confirmed by an
+//    actual 5-minute wait resolving it in practice. (Earlier guidance in
+//    this codebase cited a "20-60 minute" cooldown; that figure was never
+//    verified against Zoho's own docs and has been corrected here.) ───────
 export class ZohoRateLimitError extends Error {
   constructor(message) {
     super(message);
@@ -150,10 +149,10 @@ export async function fetchZohoJson(url, H) {
   const r = await fetch(url, { headers: H });
   const d = await r.json();
   const messageText = (d.message || '').toLowerCase();
-  if (r.status === 429 || messageText.includes('too many request') || messageText.includes('rate limit')) {
+  if (r.status === 429 || messageText.includes('too many request') || messageText.includes('rate limit') || messageText.includes('requests per minute')) {
     throw new ZohoRateLimitError(
       `Zoho API rate limit hit (HTTP ${r.status}): "${d.message || 'no message provided'}". ` +
-      `Zoho documented cooldowns run 20-60 minutes — wait before retrying rather than immediately hammering it again.`
+      `Zoho's documented limit is 100 requests/minute per organization, on a rolling window — wait a few minutes (not necessarily long) before retrying.`
     );
   }
   return d;
