@@ -603,6 +603,10 @@ tr.head-group-end td {
 }
 .npd-unclassified-row { background: #fff7ed; }
 .npd-unclassified-row td { color: #c2410c; }
+.npd-ob-row { background: #f0fdf4; }
+.npd-ob-row td { color: #15803d; font-weight: 600; }
+.npd-cb-row { background: #eff6ff; }
+.npd-cb-row td { color: #1d4ed8; font-weight: 700; }
 .npd-txn-scroll { max-height: 520px; overflow-y: auto; }
 .npd-txn-scroll table thead { position: sticky; top: 0; background: #fff; z-index: 1; }
 .npd-park-table th {

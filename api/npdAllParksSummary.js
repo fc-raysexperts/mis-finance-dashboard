@@ -210,6 +210,54 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── Opening Balance / Closing Balance ─────────────────────────────────
+    // OB = everything from park inception up to (but not including) this
+    // period's start date. CB = OB + this period's Total. Only meaningful
+    // for non-Total periods — Total Till Date has no "before" to sum.
+    // Derived entirely from the already-cached Total Till Date data (same
+    // mechanism as deriving any other period) — zero new Zoho calls.
+    if (periodLabel !== 'Total Till Date') {
+      const dayBefore = new Date(fromDate + 'T00:00:00Z');
+      dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+      const dayBeforeStr = dayBefore.toISOString().slice(0, 10);
+
+      for (const park of requestedParks) {
+        if (!parkSummaries[park]) continue;
+        const totalCached = redis ? await (async () => {
+          try { return await redis.get(`npd:cache:park_full:${park}:Total Till Date`); } catch { return null; }
+        })() : null;
+
+        if (totalCached) {
+          const ob = derivePeriodFromFullData(totalCached, '2020-04-01', dayBeforeStr);
+          const period = parkSummaries[park];
+          const cbCategoryTotals = { ...ob.category_totals };
+          for (const [cat, amt] of Object.entries(period.category_totals || {})) {
+            cbCategoryTotals[cat] = Math.round(((cbCategoryTotals[cat] || 0) + amt) * 100) / 100;
+          }
+          parkSummaries[park].ob_cwip_total = ob.cwip_total;
+          parkSummaries[park].ob_iaud_total = ob.iaud_total;
+          parkSummaries[park].ob_total = ob.total;
+          parkSummaries[park].ob_category_totals = ob.category_totals;
+          parkSummaries[park].cb_cwip_total = Math.round((ob.cwip_total + period.cwip_total) * 100) / 100;
+          parkSummaries[park].cb_iaud_total = Math.round((ob.iaud_total + period.iaud_total) * 100) / 100;
+          parkSummaries[park].cb_total = Math.round((ob.total + period.total) * 100) / 100;
+          parkSummaries[park].cb_category_totals = cbCategoryTotals;
+        } else {
+          // Total cache genuinely unavailable — OB/CB can't be derived
+          // without an expensive full live fetch just for this. Mark null
+          // rather than silently guess; frontend shows "—" for these.
+          parkSummaries[park].ob_cwip_total = null;
+          parkSummaries[park].ob_iaud_total = null;
+          parkSummaries[park].ob_total = null;
+          parkSummaries[park].ob_category_totals = null;
+          parkSummaries[park].cb_cwip_total = null;
+          parkSummaries[park].cb_iaud_total = null;
+          parkSummaries[park].cb_total = null;
+          parkSummaries[park].cb_category_totals = null;
+        }
+      }
+    }
+
     // Grand totals (the "Sum" column)
     const allCategories = new Set();
     Object.values(parkSummaries).forEach(p => Object.keys(p.category_totals).forEach(c => allCategories.add(c)));
@@ -225,6 +273,27 @@ export default async function handler(req, res) {
     sumRow.iaud_total = Math.round(sumRow.iaud_total * 100) / 100;
     sumRow.total = Math.round(sumRow.total * 100) / 100;
     for (const k in sumRow.category_totals) sumRow.category_totals[k] = Math.round(sumRow.category_totals[k] * 100) / 100;
+
+    // OB/CB sum row — only if every park had derivable OB/CB data
+    if (periodLabel !== 'Total Till Date') {
+      const allHaveOb = Object.values(parkSummaries).every(p => p.ob_total !== null && p.ob_total !== undefined);
+      if (allHaveOb) {
+        const obSum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
+        const cbSum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
+        for (const cat of allCategories) { obSum.category_totals[cat] = 0; cbSum.category_totals[cat] = 0; }
+        for (const p of Object.values(parkSummaries)) {
+          obSum.cwip_total += p.ob_cwip_total; obSum.iaud_total += p.ob_iaud_total; obSum.total += p.ob_total;
+          cbSum.cwip_total += p.cb_cwip_total; cbSum.iaud_total += p.cb_iaud_total; cbSum.total += p.cb_total;
+          for (const [cat, amt] of Object.entries(p.ob_category_totals || {})) obSum.category_totals[cat] += amt;
+          for (const [cat, amt] of Object.entries(p.cb_category_totals || {})) cbSum.category_totals[cat] += amt;
+        }
+        for (const k of ['cwip_total', 'iaud_total', 'total']) { obSum[k] = Math.round(obSum[k] * 100) / 100; cbSum[k] = Math.round(cbSum[k] * 100) / 100; }
+        for (const k in obSum.category_totals) obSum.category_totals[k] = Math.round(obSum.category_totals[k] * 100) / 100;
+        for (const k in cbSum.category_totals) cbSum.category_totals[k] = Math.round(cbSum.category_totals[k] * 100) / 100;
+        sumRow.ob = obSum;
+        sumRow.cb = cbSum;
+      }
+    }
 
     return res.status(200).json({
       period_label: periodLabel,

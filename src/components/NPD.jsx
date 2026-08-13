@@ -23,6 +23,12 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 // exists to its right.
 const parkColStyle = (index) => ((index + 1) % 3 === 0 && index < PARK_LIST.length - 1) ? { borderRight: '1.5px solid #94a3b8' } : {};
 
+// OB/CB can genuinely be unavailable (Total cache not yet warm for a park)
+// — show a plain dash rather than a misleading 0.
+function fmtOB(v) {
+  return (v === null || v === undefined) ? '—' : fmt(v);
+}
+
 function buildPeriodQuery({ periodType, fy, quarter, year, month }) {
   if (periodType === 'yearly') return `period=yearly&fy=${fy}`;
   if (periodType === 'quarterly') return `period=quarterly&fy=${fy}&quarter=${quarter}`;
@@ -61,6 +67,27 @@ function mergeSummaryChunks(chunkResults) {
   sum.iaud_total = Math.round(sum.iaud_total * 100) / 100;
   sum.total = Math.round(sum.total * 100) / 100;
   for (const k in sum.category_totals) sum.category_totals[k] = Math.round(sum.category_totals[k] * 100) / 100;
+
+  // OB/CB — aggregate across ALL merged parks, not any single chunk's own
+  // partial sum (each chunk only ever computed its own subset).
+  const parkList = Object.values(parks);
+  const allHaveOb = parkList.length > 0 && parkList.every(p => p.ob_total !== null && p.ob_total !== undefined);
+  if (allHaveOb) {
+    const obSum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
+    const cbSum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
+    for (const cat of allCategories) { obSum.category_totals[cat] = 0; cbSum.category_totals[cat] = 0; }
+    for (const p of parkList) {
+      obSum.cwip_total += p.ob_cwip_total || 0; obSum.iaud_total += p.ob_iaud_total || 0; obSum.total += p.ob_total || 0;
+      cbSum.cwip_total += p.cb_cwip_total || 0; cbSum.iaud_total += p.cb_iaud_total || 0; cbSum.total += p.cb_total || 0;
+      for (const [cat, amt] of Object.entries(p.ob_category_totals || {})) obSum.category_totals[cat] += amt;
+      for (const [cat, amt] of Object.entries(p.cb_category_totals || {})) cbSum.category_totals[cat] += amt;
+    }
+    for (const k of ['cwip_total', 'iaud_total', 'total']) { obSum[k] = Math.round(obSum[k] * 100) / 100; cbSum[k] = Math.round(cbSum[k] * 100) / 100; }
+    for (const k in obSum.category_totals) obSum.category_totals[k] = Math.round(obSum.category_totals[k] * 100) / 100;
+    for (const k in cbSum.category_totals) cbSum.category_totals[k] = Math.round(cbSum.category_totals[k] * 100) / 100;
+    sum.ob = obSum;
+    sum.cb = cbSum;
+  }
 
   return { parks, sum };
 }
@@ -190,7 +217,7 @@ export default function NPD() {
             disabled={!summary || excelExporting}
             style={{ cursor: (!summary || excelExporting) ? 'not-allowed' : 'pointer', opacity: (!summary || excelExporting) ? 0.6 : 1 }}
           >
-            {excelExporting ? (excelProgress || 'Generating…') : '⬇ Download Excel File'}
+            {excelExporting ? (excelProgress || 'Generating…') : '⬇ Download NPD Excel Data'}
           </button>
           <label className="cmp-selector-label">Period:</label>
           <select className="mo-select" value={periodType} onChange={e => setPeriodType(e.target.value)}>
@@ -267,6 +294,20 @@ export default function NPD() {
                   {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.total || 0)}</td>)}
                   <td className="col-num col-total-val">{fmt(sum?.total || 0)}</td>
                 </tr>
+                {periodType !== 'total' && (
+                  <>
+                    <tr className="npd-ob-row">
+                      <td className="col-head" colSpan={2}>Opening Balance</td>
+                      {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmtOB(parks[p]?.ob_total)}</td>)}
+                      <td className="col-num col-total-val">{fmtOB(sum?.ob?.total)}</td>
+                    </tr>
+                    <tr className="npd-cb-row">
+                      <td className="col-head" colSpan={2}>Closing Balance</td>
+                      {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmtOB(parks[p]?.cb_total)}</td>)}
+                      <td className="col-num col-total-val">{fmtOB(sum?.cb?.total)}</td>
+                    </tr>
+                  </>
+                )}
               </tbody>
             </table>
           </div>
@@ -300,6 +341,20 @@ export default function NPD() {
                   {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmt(parks[p]?.total || 0)}</td>)}
                   <td className="col-num col-total-val">{fmt(sum?.total || 0)}</td>
                 </tr>
+                {periodType !== 'total' && (
+                  <>
+                    <tr className="npd-ob-row">
+                      <td className="col-head" colSpan={2}>Opening Balance</td>
+                      {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmtOB(parks[p]?.ob_total)}</td>)}
+                      <td className="col-num col-total-val">{fmtOB(sum?.ob?.total)}</td>
+                    </tr>
+                    <tr className="npd-cb-row">
+                      <td className="col-head" colSpan={2}>Closing Balance</td>
+                      {PARK_LIST.map((p, i) => <td key={p} className="col-num" style={parkColStyle(i)}>{fmtOB(parks[p]?.cb_total)}</td>)}
+                      <td className="col-num col-total-val">{fmtOB(sum?.cb?.total)}</td>
+                    </tr>
+                  </>
+                )}
               </tbody>
             </table>
           </div>
