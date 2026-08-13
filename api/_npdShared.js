@@ -171,7 +171,7 @@ export async function fetchAllAccounts(H, ORG) {
     if (firstId && firstId === lastFirstId) break;
     all = all.concat(d.chartofaccounts); lastFirstId = firstId;
     page++; if (page > 15) break;
-    await sleep(400);
+    await sleep(700);
   }
   // GUARD: never cache a suspiciously small result. We know from months of
   // validation the real Chart of Accounts has 3,300+ entries — anything far
@@ -195,7 +195,7 @@ export async function fetchAllGlAccounts(H, ORG) {
     all = all.concat(d.generalledger);
     if (!d.page_context?.has_more_page) break;
     page++; if (page > 5) break;
-    await sleep(400);
+    await sleep(700);
   }
   const looksReal = all.length >= 1000; // known real size ~3,700+
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
@@ -214,7 +214,7 @@ export async function fetchAllProjects(H, ORG) {
     all = all.concat(d.projects);
     if (!d.page_context?.has_more_page) break;
     page++; if (page > 5) break;
-    await sleep(400);
+    await sleep(700);
   }
   const looksReal = all.length >= 30; // known real size ~57+
   let writeStatus = redis ? 'not_attempted' : 'no_redis';

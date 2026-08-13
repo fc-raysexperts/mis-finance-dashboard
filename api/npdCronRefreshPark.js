@@ -43,9 +43,10 @@ export default async function handler(req, res) {
   const toDate = new Date().toISOString().slice(0, 10);
 
   try {
-    const [accountsResult, glResult, projectsResult] = await Promise.all([
-      fetchAllAccounts(H, ORG), fetchAllGlAccounts(H, ORG), fetchAllProjects(H, ORG),
-    ]);
+    // Sequential, not parallel — same reasoning as npdAllParksSummary.js.
+    const accountsResult = await fetchAllAccounts(H, ORG);
+    const glResult = await fetchAllGlAccounts(H, ORG);
+    const projectsResult = await fetchAllProjects(H, ORG);
     const accounts = accountsResult.data;
     const glAccounts = glResult.data;
     const projects = projectsResult.data;

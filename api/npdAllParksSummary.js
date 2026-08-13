@@ -33,9 +33,14 @@ export default async function handler(req, res) {
   const { H, ORG } = auth;
 
   try {
-    const [accountsResult, glResult, projectsResult] = await Promise.all([
-      fetchAllAccounts(H, ORG), fetchAllGlAccounts(H, ORG), fetchAllProjects(H, ORG),
-    ]);
+    // Sequential, not parallel — three simultaneous paginated fetches
+    // combine their independent request bursts into one much larger spike
+    // right at the start, exactly when the cache is most likely to be fully
+    // cold (e.g. the first chunk of the day). A few extra seconds once is a
+    // fair trade for a meaningfully lower peak request rate.
+    const accountsResult = await fetchAllAccounts(H, ORG);
+    const glResult = await fetchAllGlAccounts(H, ORG);
+    const projectsResult = await fetchAllProjects(H, ORG);
     const accounts = accountsResult.data;
     const glAccounts = glResult.data;
     const projects = projectsResult.data;
