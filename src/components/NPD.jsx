@@ -111,39 +111,50 @@ export default function NPD() {
     let cancelled = false;
     setSummaryLoading(true); setSummaryError(null); setSummaryChunksLoaded(0);
 
-    Promise.allSettled(
-      PARK_CHUNKS.map(chunk =>
-        fetch(`/api/npdAllParksSummary?${periodQuery}&parks=${chunk.map(encodeURIComponent).join(',')}`)
-          .then(r => r.json())
-          .then(d => {
-            if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
-            if (!cancelled) setSummaryChunksLoaded(n => n + 1);
-            return d;
-          })
-      )
-    )
-      .then(settledResults => {
+    (async () => {
+      // Sequential, not parallel — this was the real gap. Each chunk's own
+      // pacing is safe in isolation, but 4 chunks running truly in parallel
+      // on a fully cold cache (e.g. the very first visit of the day, before
+      // any cache exists) combine to exceed Zoho's shared 100/min limit,
+      // even though no single chunk was ever unsafe on its own. Slower on a
+      // cold cache, but reliably stays under the real limit — and once a
+      // working cron is live on production, a fully cold cache should be a
+      // rare edge case rather than the normal first-visit-of-the-day state.
+      const settledResults = [];
+      for (const chunk of PARK_CHUNKS) {
         if (cancelled) return;
-        const successful = settledResults
-          .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
-          .filter(x => x.result.status === 'fulfilled');
-        const failed = settledResults
-          .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
-          .filter(x => x.result.status === 'rejected');
+        try {
+          const r = await fetch(`/api/npdAllParksSummary?${periodQuery}&parks=${chunk.map(encodeURIComponent).join(',')}`);
+          const d = await r.json();
+          if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
+          if (!cancelled) setSummaryChunksLoaded(n => n + 1);
+          settledResults.push({ status: 'fulfilled', value: d });
+        } catch (e) {
+          settledResults.push({ status: 'rejected', reason: e });
+        }
+      }
+      if (cancelled) return;
 
-        if (successful.length > 0) {
-          setSummary(mergeSummaryChunks(successful.map(x => x.result.value)));
-        }
-        if (failed.length > 0) {
-          const missingParks = failed.flatMap(x => x.chunk).join(', ');
-          const reason = failed[0].result.reason?.message || 'unknown error';
-          setSummaryError(
-            `${failed.length} of ${PARK_CHUNKS.length} groups failed to load — missing parks: ${missingParks}. ` +
-            `${successful.length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${reason}`
-          );
-        }
-      })
-      .finally(() => { if (!cancelled) setSummaryLoading(false); });
+      const successful = settledResults
+        .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
+        .filter(x => x.result.status === 'fulfilled');
+      const failed = settledResults
+        .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
+        .filter(x => x.result.status === 'rejected');
+
+      if (successful.length > 0) {
+        setSummary(mergeSummaryChunks(successful.map(x => x.result.value)));
+      }
+      if (failed.length > 0) {
+        const missingParks = failed.flatMap(x => x.chunk).join(', ');
+        const reason = failed[0].result.reason?.message || 'unknown error';
+        setSummaryError(
+          `${failed.length} of ${PARK_CHUNKS.length} groups failed to load — missing parks: ${missingParks}. ` +
+          `${successful.length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${reason}`
+        );
+      }
+      setSummaryLoading(false);
+    })();
 
     return () => { cancelled = true; };
   }, [periodQuery]);
@@ -219,7 +230,7 @@ export default function NPD() {
       {/* ── Summary tables ── */}
       {summaryLoading && (
         <div className="npd-loading">
-          <span className="npd-spinner" /> Loading summary — {summaryChunksLoaded}/{PARK_CHUNKS.length} groups done (parallel requests, can take a while on a cold cache)…
+          <span className="npd-spinner" /> Loading summary — {summaryChunksLoaded}/{PARK_CHUNKS.length} groups done (loaded one at a time to stay under Zoho's rate limit — can take a while on a fully cold cache)…
         </div>
       )}
       {summaryError && <div className="error-banner">⚠ {summaryError}</div>}
