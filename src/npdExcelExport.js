@@ -16,19 +16,29 @@ const CATEGORIES = [
 const SUMMARY_LABEL_WIDTH = 30; // fits the longest category name
 const SUMMARY_PARK_WIDTH = 12;  // fits values like "22.38 Cr"
 
-function buildHeadGroupingSheet(parks, sum) {
+// OB/CB can genuinely be unavailable (Total cache not yet warm for a park)
+// — show a plain dash rather than a misleading 0, matching the website.
+function fmtOB(v) {
+  return (v === null || v === undefined) ? '—' : fmt(v);
+}
+
+function buildHeadGroupingSheet(parks, sum, periodType) {
   const rows = [
     ['Head Grouping', ...PARK_LIST, 'Sum'],
     ['CWIP', ...PARK_LIST.map(p => fmt(parks[p]?.cwip_total || 0)), fmt(sum?.cwip_total || 0)],
     ['IAUD', ...PARK_LIST.map(p => fmt(parks[p]?.iaud_total || 0)), fmt(sum?.iaud_total || 0)],
     ['Total', ...PARK_LIST.map(p => fmt(parks[p]?.total || 0)), fmt(sum?.total || 0)],
   ];
+  if (periodType !== 'total') {
+    rows.push(['Opening Balance', ...PARK_LIST.map(p => fmtOB(parks[p]?.ob_total)), fmtOB(sum?.ob?.total)]);
+    rows.push(['Closing Balance', ...PARK_LIST.map(p => fmtOB(parks[p]?.cb_total)), fmtOB(sum?.cb?.total)]);
+  }
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [{ wch: SUMMARY_LABEL_WIDTH }, ...PARK_LIST.map(() => ({ wch: SUMMARY_PARK_WIDTH })), { wch: SUMMARY_PARK_WIDTH }];
   return ws;
 }
 
-function buildCategorySheet(parks, sum) {
+function buildCategorySheet(parks, sum, periodType) {
   const rows = [['Category', ...PARK_LIST, 'Sum']];
   for (const cat of CATEGORIES) {
     rows.push([cat, ...PARK_LIST.map(p => fmt(parks[p]?.category_totals?.[cat] || 0)), fmt(sum?.category_totals?.[cat] || 0)]);
@@ -37,6 +47,10 @@ function buildCategorySheet(parks, sum) {
     rows.push(['Unclassified', ...PARK_LIST.map(p => fmt(parks[p]?.category_totals?.['Unclassified'] || 0)), fmt(sum.category_totals['Unclassified'])]);
   }
   rows.push(['Total', ...PARK_LIST.map(p => fmt(parks[p]?.total || 0)), fmt(sum?.total || 0)]);
+  if (periodType !== 'total') {
+    rows.push(['Opening Balance', ...PARK_LIST.map(p => fmtOB(parks[p]?.ob_total)), fmtOB(sum?.ob?.total)]);
+    rows.push(['Closing Balance', ...PARK_LIST.map(p => fmtOB(parks[p]?.cb_total)), fmtOB(sum?.cb?.total)]);
+  }
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [{ wch: SUMMARY_LABEL_WIDTH }, ...PARK_LIST.map(() => ({ wch: SUMMARY_PARK_WIDTH })), { wch: SUMMARY_PARK_WIDTH }];
   return ws;
@@ -72,11 +86,11 @@ function buildParkDetailSheet(parkData) {
 // borders, etc. — at all. This is a real limitation of the library itself,
 // not something skipped here; true cell styling requires SheetJS Pro (a
 // paid product). Headers are NOT bold in the output for this reason.
-export async function downloadNPDExcel({ summary, periodQuery, periodLabel, onProgress }) {
+export async function downloadNPDExcel({ summary, periodQuery, periodLabel, periodType, onProgress }) {
   const wb = XLSX.utils.book_new();
 
-  XLSX.utils.book_append_sheet(wb, buildHeadGroupingSheet(summary.parks, summary.sum), 'Head Grouping');
-  XLSX.utils.book_append_sheet(wb, buildCategorySheet(summary.parks, summary.sum), 'Category');
+  XLSX.utils.book_append_sheet(wb, buildHeadGroupingSheet(summary.parks, summary.sum, periodType), 'Head Grouping');
+  XLSX.utils.book_append_sheet(wb, buildCategorySheet(summary.parks, summary.sum, periodType), 'Category');
 
   for (let i = 0; i < PARK_LIST.length; i++) {
     const park = PARK_LIST[i];

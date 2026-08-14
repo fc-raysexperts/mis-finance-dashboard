@@ -120,7 +120,7 @@ export default function NPD() {
     setExcelProgress('Starting…');
     try {
       await downloadNPDExcel({
-        summary, periodQuery, periodLabel,
+        summary, periodQuery, periodLabel, periodType,
         onProgress: (done, total, park) => setExcelProgress(`Fetching ${park} (${done}/${total})…`),
       });
     } catch (e) {
