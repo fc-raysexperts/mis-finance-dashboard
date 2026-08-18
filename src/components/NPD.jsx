@@ -161,24 +161,72 @@ export default function NPD() {
     (async () => {
       const parks = {};
       const fullData = {};
-      const failedParks = [];
+      const staleParks = [];
       let lastError = '';
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-      for (const park of PARK_LIST) {
+      async function fetchOnePark(park) {
+        const r = await fetch(`/api/npdParkTransactions?park=${encodeURIComponent(park)}&${periodQuery}`);
+        const d = await r.json();
+        if (d.error === 'RATE_LIMITED') throw new Error(d.message);
+        if (d.error) throw new Error(d.error);
+        return d;
+      }
+
+      // Staged retry: finish a full first pass through every park before
+      // ever retrying anything, THEN retry only what failed after a short
+      // wait, THEN one final retry after a longer wait. Letting other
+      // parks' work happen in between gives a transient issue more natural
+      // time to clear than immediately re-hitting the same park again.
+      let remaining = [...PARK_LIST];
+      for (const park of remaining) {
         if (cancelled) return;
         try {
-          const r = await fetch(`/api/npdParkTransactions?park=${encodeURIComponent(park)}&${periodQuery}`);
-          const d = await r.json();
-          if (d.error === 'RATE_LIMITED') throw new Error(d.message);
-          if (d.error) throw new Error(d.error);
+          const d = await fetchOnePark(park);
           parks[park] = extractSummaryFields(d);
           fullData[park] = d;
+          if (d.stale) staleParks.push(park);
           if (!cancelled) setParksLoaded(n => n + 1);
-        } catch (e) {
-          failedParks.push(park);
-          lastError = e.message;
+        } catch { /* leave in remaining-to-retry, handled below */ }
+      }
+      remaining = PARK_LIST.filter(p => !parks[p]);
+
+      if (remaining.length > 0 && !cancelled) {
+        await sleep(5000); // 2nd try — short wait
+        const stillFailed = [];
+        for (const park of remaining) {
+          if (cancelled) return;
+          try {
+            const d = await fetchOnePark(park);
+            parks[park] = extractSummaryFields(d);
+            fullData[park] = d;
+            if (d.stale) staleParks.push(park);
+            if (!cancelled) setParksLoaded(n => n + 1);
+          } catch (e) {
+            stillFailed.push(park);
+            lastError = e.message;
+          }
+        }
+        remaining = stillFailed;
+      }
+
+      if (remaining.length > 0 && !cancelled) {
+        await sleep(10000); // 3rd, final try — longer wait
+        for (const park of remaining) {
+          if (cancelled) return;
+          try {
+            const d = await fetchOnePark(park);
+            parks[park] = extractSummaryFields(d);
+            fullData[park] = d;
+            if (d.stale) staleParks.push(park);
+            if (!cancelled) setParksLoaded(n => n + 1);
+          } catch (e) {
+            lastError = e.message;
+          }
         }
       }
+
+      const failedParks = PARK_LIST.filter(p => !parks[p]);
       if (cancelled) return;
 
       setAllParksFullData(fullData);
@@ -187,9 +235,12 @@ export default function NPD() {
       }
       if (failedParks.length > 0) {
         setSummaryError(
-          `${failedParks.length} of ${PARK_LIST.length} parks failed to load — missing: ${failedParks.join(', ')}. ` +
-          `${Object.keys(parks).length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${lastError}`
+          `${failedParks.length} of ${PARK_LIST.length} parks failed to load (after 3 attempts each) — missing: ${failedParks.join(', ')}. ` +
+          `${Object.keys(parks).length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${lastError}` +
+          (staleParks.length > 0 ? ` Note: ${staleParks.join(', ')} are showing older cached data (fresh load failed) — check individual Park Detail for exact age.` : '')
         );
+      } else if (staleParks.length > 0) {
+        setSummaryError(`${staleParks.join(', ')} are showing older cached data (a fresh load failed after 3 attempts) — check individual Park Detail for exact age.`);
       }
       setSummaryLoading(false);
     })();
@@ -213,15 +264,25 @@ export default function NPD() {
     }
 
     setParkDetailLoading(true); setParkDetailError(null);
-    fetch(`/api/npdParkTransactions?park=${encodeURIComponent(selectedPark)}&${periodQuery}`)
-      .then(r => r.json())
-      .then(d => {
+    (async () => {
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      let lastErr;
+      for (let attempt = 0; attempt < 2; attempt++) {
         if (cancelled) return;
-        if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
-        setParkDetail(d);
-      })
-      .catch(e => { if (!cancelled) setParkDetailError(e.message); })
-      .finally(() => { if (!cancelled) setParkDetailLoading(false); });
+        try {
+          const r = await fetch(`/api/npdParkTransactions?park=${encodeURIComponent(selectedPark)}&${periodQuery}`);
+          const d = await r.json();
+          if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
+          if (!cancelled) setParkDetail(d);
+          if (!cancelled) setParkDetailLoading(false);
+          return;
+        } catch (e) {
+          lastErr = e;
+          if (attempt === 0) await sleep(5000);
+        }
+      }
+      if (!cancelled) { setParkDetailError(lastErr.message); setParkDetailLoading(false); }
+    })();
     return () => { cancelled = true; };
   }, [selectedPark, periodQuery, summaryLoading, allParksFullData]);
 
@@ -422,6 +483,11 @@ export default function NPD() {
             <div className="kpi-card"><div className="kpi-value">{parkDetail.transaction_count}</div><div className="kpi-label">Transactions</div></div>
           </div>
 
+          {parkDetail.stale && (
+            <div className="error-banner">
+              ⚠ A fresh load for {selectedPark} failed — showing the last successfully cached data instead, from {parkDetail.stale_since ? new Date(parkDetail.stale_since).toLocaleString() : 'an earlier time'}. This may not reflect the very latest bills.
+            </div>
+          )}
           {parkDetail.coa_transition_warning && (
             <div className="error-banner">⚠ {parkDetail.coa_transition_warning.message}</div>
           )}

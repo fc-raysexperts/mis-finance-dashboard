@@ -252,15 +252,22 @@ export default async function handler(req, res) {
     // to reuse it, for itself or for Summary later. Now all three paths
     // (cron, Summary, direct Park Detail) mutually benefit from each other.
     if (cacheRedis) {
+      const cacheObject = {
+        park, from_date: fromDate, to_date: toDate, period_label: periodLabel,
+        account_count: parkAccounts.length, transaction_count: allTxns.length,
+        total, cwip_total: cwipTotal, iaud_total: iaudTotal,
+        category_totals: categoryTotals, unclassified_count: unclassifiedEntries.length,
+        transactions: allTxns, cached_at: new Date().toISOString(),
+      };
       try {
-        await cacheRedis.set(`npd:cache:park_full:${park}:${periodLabel}`, {
-          park, from_date: fromDate, to_date: toDate, period_label: periodLabel,
-          account_count: parkAccounts.length, transaction_count: allTxns.length,
-          total, cwip_total: cwipTotal, iaud_total: iaudTotal,
-          category_totals: categoryTotals, unclassified_count: unclassifiedEntries.length,
-          transactions: allTxns, cached_at: new Date().toISOString(),
-        }, { ex: getSecondsUntilNext6AMIST() });
+        await cacheRedis.set(`npd:cache:park_full:${park}:${periodLabel}`, cacheObject, { ex: getSecondsUntilNext6AMIST() });
       } catch { /* non-fatal — response still returns correctly even if this write fails */ }
+      // Separate, longer-lived backup (7 days) — survives past the regular
+      // daily expiry specifically so a failed fresh fetch has something
+      // real to fall back to, rather than showing nothing at all.
+      try {
+        await cacheRedis.set(`npd:cache:park_lastknown:${park}:${periodLabel}`, cacheObject, { ex: 7 * 24 * 3600 });
+      } catch { /* non-fatal */ }
     }
 
     return res.status(200).json({
@@ -302,6 +309,22 @@ export default async function handler(req, res) {
       transactions: allTxns,
     });
   } catch (err) {
+    // Before giving up entirely, try the longer-lived backup — showing
+    // clearly-labeled stale data is better than showing nothing at all.
+    if (cacheRedis) {
+      try {
+        const stale = await cacheRedis.get(`npd:cache:park_lastknown:${park}:${periodLabel}`);
+        if (stale) {
+          return res.status(200).json({
+            ...stale,
+            stale: true,
+            stale_reason: err instanceof ZohoRateLimitError ? 'RATE_LIMITED' : err.message,
+            stale_since: stale.cached_at,
+            response_time_ms: Date.now() - startTime,
+          });
+        }
+      } catch { /* fall through to the real error below */ }
+    }
     if (err instanceof ZohoRateLimitError) {
       return res.status(429).json({ error: 'RATE_LIMITED', message: err.message });
     }
