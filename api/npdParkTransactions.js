@@ -104,12 +104,28 @@ export default async function handler(req, res) {
         const cachedTotal = await cacheRedis.get(`npd:cache:park_full:${park}:Total Till Date`);
         if (cachedTotal) {
           const derived = derivePeriodFromFullData(cachedTotal, fromDate, toDate);
+          // OB/CB — reuses the SAME already-fetched Total data, just a
+          // different date slice (everything before this period started).
+          // No extra Redis read needed since cachedTotal is already here.
+          const dayBefore = new Date(fromDate + 'T00:00:00Z');
+          dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+          const dayBeforeStr = dayBefore.toISOString().slice(0, 10);
+          const ob = derivePeriodFromFullData(cachedTotal, '2020-04-01', dayBeforeStr);
+          const cbCategoryTotals = { ...ob.category_totals };
+          for (const [cat, amt] of Object.entries(derived.category_totals || {})) {
+            cbCategoryTotals[cat] = Math.round(((cbCategoryTotals[cat] || 0) + amt) * 100) / 100;
+          }
           return res.status(200).json({
             park, period_label: periodLabel, from_date: fromDate, to_date: toDate,
             account_count: derived.account_count, transaction_count: derived.transaction_count,
             total: derived.total, cwip_total: derived.cwip_total, iaud_total: derived.iaud_total,
             category_totals: derived.category_totals, unclassified_count: derived.unclassified_count,
             transactions: derived.transactions,
+            ob_cwip_total: ob.cwip_total, ob_iaud_total: ob.iaud_total, ob_total: ob.total, ob_category_totals: ob.category_totals,
+            cb_cwip_total: Math.round((ob.cwip_total + derived.cwip_total) * 100) / 100,
+            cb_iaud_total: Math.round((ob.iaud_total + derived.iaud_total) * 100) / 100,
+            cb_total: Math.round((ob.total + derived.total) * 100) / 100,
+            cb_category_totals: cbCategoryTotals,
             derived_from_total_cache: true, response_time_ms: Date.now() - startTime,
           });
         }
@@ -270,6 +286,19 @@ export default async function handler(req, res) {
       unclassified_entries: unclassifiedEntries.length > 0 ? unclassifiedEntries : undefined,
       coa_transition_warning: coaTransitionWarning,
       pending_new_park_review: pendingNewParkReview,
+      // OB/CB genuinely unavailable here — reaching live computation for a
+      // non-Total period specifically means we already confirmed no Total
+      // cache exists to derive an "everything before this period" figure
+      // from, and this live fetch only pulled the requested narrow range,
+      // not full history. Total Till Date itself has no OB/CB concept.
+      ob_cwip_total: periodLabel !== 'Total Till Date' ? null : undefined,
+      ob_iaud_total: periodLabel !== 'Total Till Date' ? null : undefined,
+      ob_total: periodLabel !== 'Total Till Date' ? null : undefined,
+      ob_category_totals: periodLabel !== 'Total Till Date' ? null : undefined,
+      cb_cwip_total: periodLabel !== 'Total Till Date' ? null : undefined,
+      cb_iaud_total: periodLabel !== 'Total Till Date' ? null : undefined,
+      cb_total: periodLabel !== 'Total Till Date' ? null : undefined,
+      cb_category_totals: periodLabel !== 'Total Till Date' ? null : undefined,
       transactions: allTxns,
     });
   } catch (err) {

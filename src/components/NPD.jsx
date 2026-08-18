@@ -43,21 +43,35 @@ function getPeriodLabel({ periodType, fy, quarter, year, month }) {
   return 'Total_Till_Date';
 }
 
-// Round-robin into 4 chunks so the heaviest parks (Dechu, Lunkaransar,
-// Panchu) land in DIFFERENT chunks rather than clustering together — keeps
-// each chunk's total work roughly balanced instead of one chunk being much
-// slower than the others.
-const PARK_CHUNKS = [0, 1, 2, 3].map(offset => PARK_LIST.filter((_, i) => i % 4 === offset));
+// Builds the two summary tables' per-park aggregate fields from a single
+// park's FULL npdParkTransactions response (which includes everything
+// needed, plus the full transaction list we don't need for the tables).
+function extractSummaryFields(fullData) {
+  return {
+    account_count: fullData.account_count,
+    cwip_total: fullData.cwip_total,
+    iaud_total: fullData.iaud_total,
+    total: fullData.total,
+    unclassified_count: fullData.unclassified_count,
+    category_totals: fullData.category_totals,
+    ob_cwip_total: fullData.ob_cwip_total ?? null,
+    ob_iaud_total: fullData.ob_iaud_total ?? null,
+    ob_total: fullData.ob_total ?? null,
+    ob_category_totals: fullData.ob_category_totals ?? null,
+    cb_cwip_total: fullData.cb_cwip_total ?? null,
+    cb_iaud_total: fullData.cb_iaud_total ?? null,
+    cb_total: fullData.cb_total ?? null,
+    cb_category_totals: fullData.cb_category_totals ?? null,
+  };
+}
 
-function mergeSummaryChunks(chunkResults) {
-  const parks = {};
-  for (const chunk of chunkResults) Object.assign(parks, chunk.parks || {});
-
+function computeSumRow(parks) {
+  const parkList = Object.values(parks);
   const allCategories = new Set();
-  Object.values(parks).forEach(p => Object.keys(p.category_totals || {}).forEach(c => allCategories.add(c)));
+  parkList.forEach(p => Object.keys(p.category_totals || {}).forEach(c => allCategories.add(c)));
   const sum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
   for (const cat of allCategories) sum.category_totals[cat] = 0;
-  for (const p of Object.values(parks)) {
+  for (const p of parkList) {
     sum.cwip_total += p.cwip_total || 0;
     sum.iaud_total += p.iaud_total || 0;
     sum.total += p.total || 0;
@@ -68,9 +82,6 @@ function mergeSummaryChunks(chunkResults) {
   sum.total = Math.round(sum.total * 100) / 100;
   for (const k in sum.category_totals) sum.category_totals[k] = Math.round(sum.category_totals[k] * 100) / 100;
 
-  // OB/CB — aggregate across ALL merged parks, not any single chunk's own
-  // partial sum (each chunk only ever computed its own subset).
-  const parkList = Object.values(parks);
   const allHaveOb = parkList.length > 0 && parkList.every(p => p.ob_total !== null && p.ob_total !== undefined);
   if (allHaveOb) {
     const obSum = { cwip_total: 0, iaud_total: 0, total: 0, category_totals: {} };
@@ -88,8 +99,7 @@ function mergeSummaryChunks(chunkResults) {
     sum.ob = obSum;
     sum.cb = cbSum;
   }
-
-  return { parks, sum };
+  return sum;
 }
 
 export default function NPD() {
@@ -102,6 +112,12 @@ export default function NPD() {
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(null);
+  const [parksLoaded, setParksLoaded] = useState(0);
+
+  // Holds each park's COMPLETE response (including full transactions) as
+  // the sequential loop fetches them — lets Park Detail reuse this directly
+  // for whichever park is selected, instead of a redundant separate fetch.
+  const [allParksFullData, setAllParksFullData] = useState({});
 
   const [selectedPark, setSelectedPark] = useState('Dechu');
   const [parkDetail, setParkDetail] = useState(null);
@@ -132,52 +148,47 @@ export default function NPD() {
     }
   }
 
-  const [summaryChunksLoaded, setSummaryChunksLoaded] = useState(0);
-
+  // ── Summary: fetch all 15 parks ONE AT A TIME via the same proven
+  //    single-park endpoint that already powers Park Detail and the Excel
+  //    export. A failure on any one park is fully isolated — it can never
+  //    destroy other parks' already-successful data, unlike the previous
+  //    4-park-chunk design where one failure lost the whole chunk.
   useEffect(() => {
     let cancelled = false;
-    setSummaryLoading(true); setSummaryError(null); setSummaryChunksLoaded(0);
+    setSummaryLoading(true); setSummaryError(null); setParksLoaded(0);
+    setAllParksFullData({});
 
     (async () => {
-      // Sequential, not parallel — this was the real gap. Each chunk's own
-      // pacing is safe in isolation, but 4 chunks running truly in parallel
-      // on a fully cold cache (e.g. the very first visit of the day, before
-      // any cache exists) combine to exceed Zoho's shared 100/min limit,
-      // even though no single chunk was ever unsafe on its own. Slower on a
-      // cold cache, but reliably stays under the real limit — and once a
-      // working cron is live on production, a fully cold cache should be a
-      // rare edge case rather than the normal first-visit-of-the-day state.
-      const settledResults = [];
-      for (const chunk of PARK_CHUNKS) {
+      const parks = {};
+      const fullData = {};
+      const failedParks = [];
+      let lastError = '';
+
+      for (const park of PARK_LIST) {
         if (cancelled) return;
         try {
-          const r = await fetch(`/api/npdAllParksSummary?${periodQuery}&parks=${chunk.map(encodeURIComponent).join(',')}`);
+          const r = await fetch(`/api/npdParkTransactions?park=${encodeURIComponent(park)}&${periodQuery}`);
           const d = await r.json();
-          if (d.error === 'RATE_LIMITED') throw new Error(d.message); if (d.error) throw new Error(d.error);
-          if (!cancelled) setSummaryChunksLoaded(n => n + 1);
-          settledResults.push({ status: 'fulfilled', value: d });
+          if (d.error === 'RATE_LIMITED') throw new Error(d.message);
+          if (d.error) throw new Error(d.error);
+          parks[park] = extractSummaryFields(d);
+          fullData[park] = d;
+          if (!cancelled) setParksLoaded(n => n + 1);
         } catch (e) {
-          settledResults.push({ status: 'rejected', reason: e });
+          failedParks.push(park);
+          lastError = e.message;
         }
       }
       if (cancelled) return;
 
-      const successful = settledResults
-        .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
-        .filter(x => x.result.status === 'fulfilled');
-      const failed = settledResults
-        .map((r, i) => ({ result: r, chunk: PARK_CHUNKS[i] }))
-        .filter(x => x.result.status === 'rejected');
-
-      if (successful.length > 0) {
-        setSummary(mergeSummaryChunks(successful.map(x => x.result.value)));
+      setAllParksFullData(fullData);
+      if (Object.keys(parks).length > 0) {
+        setSummary({ parks, sum: computeSumRow(parks) });
       }
-      if (failed.length > 0) {
-        const missingParks = failed.flatMap(x => x.chunk).join(', ');
-        const reason = failed[0].result.reason?.message || 'unknown error';
+      if (failedParks.length > 0) {
         setSummaryError(
-          `${failed.length} of ${PARK_CHUNKS.length} groups failed to load — missing parks: ${missingParks}. ` +
-          `${successful.length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${reason}`
+          `${failedParks.length} of ${PARK_LIST.length} parks failed to load — missing: ${failedParks.join(', ')}. ` +
+          `${Object.keys(parks).length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${lastError}`
         );
       }
       setSummaryLoading(false);
@@ -186,9 +197,21 @@ export default function NPD() {
     return () => { cancelled = true; };
   }, [periodQuery]);
 
+  // ── Park Detail: reuse data already fetched during the summary loop if
+  //    available (instant, zero extra request) — only fetch fresh if the
+  //    selected park wasn't successfully loaded there (e.g. it failed, or
+  //    the user picked a different park after summary already finished).
   useEffect(() => {
     if (summaryLoading) return;
     let cancelled = false;
+
+    if (allParksFullData[selectedPark]) {
+      setParkDetail(allParksFullData[selectedPark]);
+      setParkDetailError(null);
+      setParkDetailLoading(false);
+      return;
+    }
+
     setParkDetailLoading(true); setParkDetailError(null);
     fetch(`/api/npdParkTransactions?park=${encodeURIComponent(selectedPark)}&${periodQuery}`)
       .then(r => r.json())
@@ -200,7 +223,7 @@ export default function NPD() {
       .catch(e => { if (!cancelled) setParkDetailError(e.message); })
       .finally(() => { if (!cancelled) setParkDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedPark, periodQuery, summaryLoading]);
+  }, [selectedPark, periodQuery, summaryLoading, allParksFullData]);
 
   const sum = summary?.sum;
   const parks = summary?.parks || {};
@@ -257,7 +280,7 @@ export default function NPD() {
       {/* ── Summary tables ── */}
       {summaryLoading && (
         <div className="npd-loading">
-          <span className="npd-spinner" /> Loading summary — {summaryChunksLoaded}/{PARK_CHUNKS.length} groups done (loaded one at a time to stay under Zoho's rate limit — can take a while on a fully cold cache)…
+          <span className="npd-spinner" /> Loading summary — {parksLoaded}/{PARK_LIST.length} parks done (one at a time, so one park's issue can never affect another's)…
         </div>
       )}
       {summaryError && <div className="error-banner">⚠ {summaryError}</div>}
@@ -418,7 +441,7 @@ export default function NPD() {
                 </tr>
               </thead>
               <tbody>
-                {parkDetail.transactions.map((t, i) => (
+                {(parkDetail.transactions || []).map((t, i) => (
                   <tr key={i} className={t.category === 'Unclassified' ? 'npd-unclassified-row' : ''}>
                     <td>{t.date}</td>
                     <td>{t.vendor}</td>
