@@ -176,8 +176,20 @@ export default async function handler(req, res) {
         return glMatch && (parseFloat(glMatch.debit_total) || 0) !== 0;
       });
 
+    // FIXED — the real gap that left OB/CB permanently null for any park
+    // whose Total cache went cold: this used to fetch only the originally
+    // REQUESTED narrow date range, meaning a live fallback for e.g. FY26
+    // never warmed the Total cache at all — so OB/CB stayed null forever,
+    // and no amount of reloading the same FY26 view could ever self-heal it,
+    // since nothing in that path ever computed the full history. Now this
+    // ALWAYS fetches the full 2020-04-01-to-today range regardless of what
+    // was requested, so a live fallback for ANY period also permanently
+    // fixes Total (and therefore OB/CB) for every period going forward.
+    const liveFromDate = '2020-04-01';
+    const liveToDate = new Date().toISOString().slice(0, 10);
+
     const accountResults = await processBatched(parkAccounts, 3, 1500, async (acct) => {
-      const txns = await fetchAccountTransactions(H, ORG, acct.account_id, fromDate, toDate);
+      const txns = await fetchAccountTransactions(H, ORG, acct.account_id, liveFromDate, liveToDate);
       const cls = classify(acct.account_name, park, customClassifications);
       return txns.map(t => ({
         date: t.date,
@@ -204,7 +216,7 @@ export default async function handler(req, res) {
     let allNewBills = [];
     for (const proj of matchedProjects) {
       const bills = await fetchProjectBills(H, ORG, proj.project_id);
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && (b.date || '') >= fromDate && (b.date || '') <= toDate);
+      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && (b.date || '') >= liveFromDate && (b.date || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
@@ -246,35 +258,67 @@ export default async function handler(req, res) {
     const coaTransitionWarning = await checkCoaTransition(park, parkAccounts.length);
     const pendingNewParkReview = await checkPendingNewParks();
 
-    // Write back to the shared cache — previously this endpoint only ever
-    // READ from it, meaning a park visited directly (before Summary ever
-    // cached it) did all this live work and then discarded the opportunity
-    // to reuse it, for itself or for Summary later. Now all three paths
-    // (cron, Summary, direct Park Detail) mutually benefit from each other.
+    // The above is now ALWAYS the full Total Till Date dataset — cache it
+    // as such regardless of what period was originally requested.
+    const fullTotalObject = {
+      park, from_date: liveFromDate, to_date: liveToDate, period_label: 'Total Till Date',
+      account_count: parkAccounts.length, transaction_count: allTxns.length,
+      total, cwip_total: cwipTotal, iaud_total: iaudTotal,
+      category_totals: categoryTotals, unclassified_count: unclassifiedEntries.length,
+      transactions: allTxns, cached_at: new Date().toISOString(),
+    };
     if (cacheRedis) {
-      const cacheObject = {
-        park, from_date: fromDate, to_date: toDate, period_label: periodLabel,
-        account_count: parkAccounts.length, transaction_count: allTxns.length,
-        total, cwip_total: cwipTotal, iaud_total: iaudTotal,
-        category_totals: categoryTotals, unclassified_count: unclassifiedEntries.length,
-        transactions: allTxns, cached_at: new Date().toISOString(),
-      };
-      try {
-        await cacheRedis.set(`npd:cache:park_full:${park}:${periodLabel}`, cacheObject, { ex: getSecondsUntilNext6AMIST() });
-      } catch { /* non-fatal — response still returns correctly even if this write fails */ }
-      // Separate, longer-lived backup (7 days) — survives past the regular
-      // daily expiry specifically so a failed fresh fetch has something
-      // real to fall back to, rather than showing nothing at all.
-      try {
-        await cacheRedis.set(`npd:cache:park_lastknown:${park}:${periodLabel}`, cacheObject, { ex: 7 * 24 * 3600 });
-      } catch { /* non-fatal */ }
+      try { await cacheRedis.set(`npd:cache:park_full:${park}:Total Till Date`, fullTotalObject, { ex: getSecondsUntilNext6AMIST() }); } catch { /* non-fatal */ }
+      try { await cacheRedis.set(`npd:cache:park_lastknown:${park}:Total Till Date`, fullTotalObject, { ex: 7 * 24 * 3600 }); } catch { /* non-fatal */ }
     }
 
+    // If a narrower period was actually requested, derive it (plus OB/CB)
+    // from the full dataset we just computed — same mechanism as the
+    // derive-from-Total path above, just using freshly-computed data
+    // instead of a cache read.
+    if (periodLabel !== 'Total Till Date') {
+      const derived = derivePeriodFromFullData(fullTotalObject, fromDate, toDate);
+      const dayBefore = new Date(fromDate + 'T00:00:00Z');
+      dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+      const dayBeforeStr = dayBefore.toISOString().slice(0, 10);
+      const ob = derivePeriodFromFullData(fullTotalObject, '2020-04-01', dayBeforeStr);
+      const cbCategoryTotals = { ...ob.category_totals };
+      for (const [cat, amt] of Object.entries(derived.category_totals || {})) {
+        cbCategoryTotals[cat] = Math.round(((cbCategoryTotals[cat] || 0) + amt) * 100) / 100;
+      }
+      const derivedResult = {
+        park, period_label: periodLabel, from_date: fromDate, to_date: toDate,
+        account_count: derived.account_count, transaction_count: derived.transaction_count,
+        total: derived.total, cwip_total: derived.cwip_total, iaud_total: derived.iaud_total,
+        category_totals: derived.category_totals, unclassified_count: derived.unclassified_count,
+        transactions: derived.transactions,
+        ob_cwip_total: ob.cwip_total, ob_iaud_total: ob.iaud_total, ob_total: ob.total, ob_category_totals: ob.category_totals,
+        cb_cwip_total: Math.round((ob.cwip_total + derived.cwip_total) * 100) / 100,
+        cb_iaud_total: Math.round((ob.iaud_total + derived.iaud_total) * 100) / 100,
+        cb_total: Math.round((ob.total + derived.total) * 100) / 100,
+        cb_category_totals: cbCategoryTotals,
+        cached_at: new Date().toISOString(),
+      };
+      if (cacheRedis) {
+        try { await cacheRedis.set(`npd:cache:park_full:${park}:${periodLabel}`, derivedResult, { ex: getSecondsUntilNext6AMIST() }); } catch { /* non-fatal */ }
+        try { await cacheRedis.set(`npd:cache:park_lastknown:${park}:${periodLabel}`, derivedResult, { ex: 7 * 24 * 3600 }); } catch { /* non-fatal */ }
+      }
+      return res.status(200).json({
+        ...derivedResult,
+        coa_transition_warning: coaTransitionWarning,
+        pending_new_park_review: pendingNewParkReview,
+        response_time_ms: Date.now() - startTime,
+      });
+    }
+
+    // Reaching here means periodLabel === 'Total Till Date' specifically —
+    // the fullTotalObject cache write above already covers this case, no
+    // separate write-back needed.
     return res.status(200).json({
       park,
       period_label: periodLabel,
-      from_date: fromDate,
-      to_date: toDate,
+      from_date: liveFromDate,
+      to_date: liveToDate,
       response_time_ms: Date.now() - startTime,
       cache_status: {
         coa: accountsResult.cache_status,
@@ -293,19 +337,9 @@ export default async function handler(req, res) {
       unclassified_entries: unclassifiedEntries.length > 0 ? unclassifiedEntries : undefined,
       coa_transition_warning: coaTransitionWarning,
       pending_new_park_review: pendingNewParkReview,
-      // OB/CB genuinely unavailable here — reaching live computation for a
-      // non-Total period specifically means we already confirmed no Total
-      // cache exists to derive an "everything before this period" figure
-      // from, and this live fetch only pulled the requested narrow range,
-      // not full history. Total Till Date itself has no OB/CB concept.
-      ob_cwip_total: periodLabel !== 'Total Till Date' ? null : undefined,
-      ob_iaud_total: periodLabel !== 'Total Till Date' ? null : undefined,
-      ob_total: periodLabel !== 'Total Till Date' ? null : undefined,
-      ob_category_totals: periodLabel !== 'Total Till Date' ? null : undefined,
-      cb_cwip_total: periodLabel !== 'Total Till Date' ? null : undefined,
-      cb_iaud_total: periodLabel !== 'Total Till Date' ? null : undefined,
-      cb_total: periodLabel !== 'Total Till Date' ? null : undefined,
-      cb_category_totals: periodLabel !== 'Total Till Date' ? null : undefined,
+      // Reaching here always means Total Till Date specifically now — OB/CB
+      // don't apply (nothing "before the beginning" to sum), so simply
+      // omitted rather than conditionally null.
       transactions: allTxns,
     });
   } catch (err) {
