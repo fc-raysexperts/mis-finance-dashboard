@@ -188,9 +188,12 @@ export default async function handler(req, res) {
     const liveFromDate = '2020-04-01';
     const liveToDate = new Date().toISOString().slice(0, 10);
 
-    // Paced at ~85 req/min (well under Zoho's 100/min limit) rather than
-    // right at the edge — a real safety margin, not just barely under.
-    const accountResults = await processBatched(parkAccounts, 3, 1800, async (acct) => {
+    // REVERTED from bulk fetch — real-scale testing against Dechu showed
+    // Zoho's endpoint silently truncates the combined response past some
+    // internal row cap (235 of 551 real transactions came back, no error
+    // at all). Small-park testing never revealed this. Back to the proven,
+    // fully-verified one-request-per-account approach, paced at ~90 req/min.
+    const accountResults = await processBatched(parkAccounts, 3, 1600, async (acct) => {
       const txns = await fetchAccountTransactions(H, ORG, acct.account_id, liveFromDate, liveToDate);
       const cls = classify(acct.account_name, park, customClassifications);
       return txns.map(t => ({
@@ -223,7 +226,7 @@ export default async function handler(req, res) {
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
 
-    const billResults = await processBatched(allNewBills, 3, 1800, async ({ bill: b, projectName }) => {
+    const billResults = await processBatched(allNewBills, 3, 1600, async ({ bill: b, projectName }) => {
       const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
       billDetailCallsMade++;
       const lineItems = dd.bill?.line_items || [];

@@ -1,10 +1,13 @@
 import * as XLSX from 'xlsx';
 import { fmt } from './utils.js';
 
+// Descending by real Total Till Date cost — matches the website's table
+// column order exactly, so the downloaded file's columns aren't in a
+// different order than what you actually see on screen.
 const PARK_LIST = [
-  'Jaisalmer', 'Kolayat', 'Dechu', 'Lunkaransar', 'Napasar', 'Panchu', 'Pugal',
-  'Bhamatsar', 'Sanchore', 'Tosham', 'SS Nagar', 'Thukariyasar',
-  'Baithwasiya', 'Jasarasar', 'Sheruna',
+  'Dechu', 'Lunkaransar', 'SS Nagar', 'Pugal', 'Panchu', 'Kolayat', 'Tosham',
+  'Jaisalmer', 'Napasar', 'Bhamatsar', 'Sanchore', 'Jasarasar', 'Baithwasiya',
+  'Sheruna', 'Thukariyasar',
 ];
 const CATEGORIES = [
   'Registration Fees', 'Commission', 'Land Lease Registration', 'Land Lease Expenses',

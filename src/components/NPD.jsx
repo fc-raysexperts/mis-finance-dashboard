@@ -3,10 +3,14 @@ import { fmt } from '../utils.js';
 import { NPDParkCostChart } from './Charts.jsx';
 import { downloadNPDExcel } from '../npdExcelExport.js';
 
+// Descending by real Total Till Date cost (biggest first) — verified from
+// actual dashboard figures, not assumption. Drives table column order and
+// the Park Detail dropdown. FETCH_ORDER below is deliberately just this,
+// reversed — one array, always in sync, no risk of the two drifting apart.
 const PARK_LIST = [
-  'Jaisalmer', 'Kolayat', 'Dechu', 'Lunkaransar', 'Napasar', 'Panchu', 'Pugal',
-  'Bhamatsar', 'Sanchore', 'Tosham', 'SS Nagar', 'Thukariyasar',
-  'Baithwasiya', 'Jasarasar', 'Sheruna',
+  'Dechu', 'Lunkaransar', 'SS Nagar', 'Pugal', 'Panchu', 'Kolayat', 'Tosham',
+  'Jaisalmer', 'Napasar', 'Bhamatsar', 'Sanchore', 'Jasarasar', 'Baithwasiya',
+  'Sheruna', 'Thukariyasar',
 ];
 const CATEGORIES = [
   'Registration Fees', 'Commission', 'Land Lease Registration', 'Land Lease Expenses',
@@ -193,17 +197,15 @@ export default function NPD() {
       // wait, THEN one final retry after a longer wait. Letting other
       // parks' work happen in between gives a transient issue more natural
       // time to clear than immediately re-hitting the same park again.
+      //
       // Fetch order only — NEVER changes table column order (that always
       // stays PARK_LIST). Lightest/fastest parks first, heaviest last —
-      // means most of your 15 parks succeed early while rate-limit margin
-      // is still generous, and the few genuinely heavy ones (which most
-      // benefit from a retry) land where a retry actually has room to help,
-      // instead of being scattered randomly through the sequence.
-      const FETCH_ORDER = [
-        'Jaisalmer', 'Tosham', 'Bhamatsar', 'Napasar', 'Sanchore', 'SS Nagar',
-        'Baithwasiya', 'Jasarasar', 'Sheruna', 'Thukariyasar',
-        'Kolayat', 'Pugal', 'Panchu', 'Lunkaransar', 'Dechu',
-      ];
+      // derived directly from PARK_LIST (which is now sorted biggest-first)
+      // via reverse(), rather than a second hardcoded list. One source of
+      // truth for park size — impossible for fetch order and display order
+      // to silently disagree with each other the way two separate
+      // hardcoded arrays eventually could.
+      const FETCH_ORDER = [...PARK_LIST].reverse();
       let remaining = [...FETCH_ORDER];
       for (const park of remaining) {
         if (cancelled) return;

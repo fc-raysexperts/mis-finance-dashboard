@@ -240,6 +240,40 @@ export async function fetchAccountTransactions(H, ORG, accountId, fromDate, toDa
   return found;
 }
 
+// Bulk version — asks for MULTIPLE accounts' transactions in a single
+// request instead of one request per account. Directly verified against
+// real production data before ever being used here: identical transaction
+// count and identical total (to the paisa) versus the one-at-a-time
+// approach, across 14 real accounts at once. Each returned transaction
+// self-identifies its own account_name/account_id — Zoho labels this
+// correctly per-row, so there's no risk of misattributing a transaction to
+// the wrong account when asking for several at once.
+// ⚠ DO NOT USE — FAILED REAL-SCALE VALIDATION. Worked correctly for a small
+// park (Jaisalmer, 50 transactions across 14 accounts), but tested against
+// Dechu (551 real transactions, 25 accounts) it silently returned only 235
+// — likely an internal Zoho response row-cap we never paginated past, with
+// zero error to indicate anything was dropped. Kept here (unused) as a
+// record of what was tried and why it's not safe as-is — a future version
+// would need real pagination handling, tested at Dechu-scale again before
+// ever touching production code.
+export async function fetchAccountTransactionsBulk(H, ORG, accountIds, fromDate, toDate) {
+  if (accountIds.length === 0) return [];
+  const rule = encodeURIComponent(JSON.stringify({
+    columns: [{ index: 1, field: 'account_id', group: 'report', comparator: 'in', value: accountIds }],
+    criteria_string: '1',
+  }));
+  const url = `https://www.zohoapis.in/books/v3/reports/accounttransaction?${ORG}&from_date=${fromDate}&to_date=${toDate}&rule=${rule}`;
+  const d = await fetchZohoJson(url, H);
+  const entries = d.account_transactions || [];
+  let found = [];
+  for (const entry of entries) {
+    for (const value of Object.values(entry || {})) {
+      if (Array.isArray(value)) found = found.concat(value);
+    }
+  }
+  return found;
+}
+
 export async function fetchProjectBills(H, ORG, projectId) {
   const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills?${ORG}&project_id=${projectId}&per_page=200`, H);
   return d.bills || [];
