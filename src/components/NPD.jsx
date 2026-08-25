@@ -113,6 +113,7 @@ export default function NPD() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(null);
   const [parksLoaded, setParksLoaded] = useState(0);
+  const [snapshotTimestamp, setSnapshotTimestamp] = useState(null);
 
   // Holds each park's COMPLETE response (including full transactions) as
   // the sequential loop fetches them — lets Park Detail reuse this directly
@@ -158,6 +159,20 @@ export default function NPD() {
     setSummaryLoading(true); setSummaryError(null); setParksLoaded(0);
     setAllParksFullData({});
 
+    // Show a previous successful snapshot instantly, clearly labeled as
+    // possibly outdated, while the real fetch runs underneath — something
+    // useful on screen immediately instead of a blank wait on every load.
+    try {
+      const snapshotRaw = localStorage.getItem(`npd_snapshot_${periodQuery}`);
+      if (snapshotRaw) {
+        const snapshot = JSON.parse(snapshotRaw);
+        setSummary(snapshot.data);
+        setSnapshotTimestamp(snapshot.savedAt);
+      } else {
+        setSnapshotTimestamp(null);
+      }
+    } catch { /* corrupted/unavailable storage — just skip the instant snapshot */ }
+
     (async () => {
       const parks = {};
       const fullData = {};
@@ -178,7 +193,18 @@ export default function NPD() {
       // wait, THEN one final retry after a longer wait. Letting other
       // parks' work happen in between gives a transient issue more natural
       // time to clear than immediately re-hitting the same park again.
-      let remaining = [...PARK_LIST];
+      // Fetch order only — NEVER changes table column order (that always
+      // stays PARK_LIST). Lightest/fastest parks first, heaviest last —
+      // means most of your 15 parks succeed early while rate-limit margin
+      // is still generous, and the few genuinely heavy ones (which most
+      // benefit from a retry) land where a retry actually has room to help,
+      // instead of being scattered randomly through the sequence.
+      const FETCH_ORDER = [
+        'Jaisalmer', 'Tosham', 'Bhamatsar', 'Napasar', 'Sanchore', 'SS Nagar',
+        'Baithwasiya', 'Jasarasar', 'Sheruna', 'Thukariyasar',
+        'Kolayat', 'Pugal', 'Panchu', 'Lunkaransar', 'Dechu',
+      ];
+      let remaining = [...FETCH_ORDER];
       for (const park of remaining) {
         if (cancelled) return;
         try {
@@ -189,7 +215,7 @@ export default function NPD() {
           if (!cancelled) setParksLoaded(n => n + 1);
         } catch { /* leave in remaining-to-retry, handled below */ }
       }
-      remaining = PARK_LIST.filter(p => !parks[p]);
+      remaining = FETCH_ORDER.filter(p => !parks[p]);
 
       if (remaining.length > 0 && !cancelled) {
         await sleep(5000); // 2nd try — short wait
@@ -211,7 +237,31 @@ export default function NPD() {
       }
 
       if (remaining.length > 0 && !cancelled) {
-        await sleep(10000); // 3rd, final try — longer wait
+        await sleep(10000); // 3rd try — longer wait
+        const stillFailed2 = [];
+        for (const park of remaining) {
+          if (cancelled) return;
+          try {
+            const d = await fetchOnePark(park);
+            parks[park] = extractSummaryFields(d);
+            fullData[park] = d;
+            if (d.stale) staleParks.push(park);
+            if (!cancelled) setParksLoaded(n => n + 1);
+          } catch (e) {
+            stillFailed2.push(park);
+            lastError = e.message;
+          }
+        }
+        remaining = stillFailed2;
+      }
+
+      if (remaining.length > 0 && !cancelled) {
+        // 4th, final try — a genuine 60-second wait. Zoho's limit is 100
+        // requests per MINUTE, rolling — the earlier 5s/10s waits are both
+        // shorter than that window, so they can only ever catch a partial
+        // recovery. A full 60 seconds guarantees a genuinely fresh window
+        // by the time we retry, not one still overlapping the congested one.
+        await sleep(60000);
         for (const park of remaining) {
           if (cancelled) return;
           try {
@@ -231,16 +281,26 @@ export default function NPD() {
 
       setAllParksFullData(fullData);
       if (Object.keys(parks).length > 0) {
-        setSummary({ parks, sum: computeSumRow(parks) });
+        const freshSummary = { parks, sum: computeSumRow(parks) };
+        setSummary(freshSummary);
+        setSnapshotTimestamp(null);
+        // Only snapshot a genuinely COMPLETE result (all 15 parks, zero
+        // failures) — a partial snapshot could later get shown as if it
+        // were the full picture, which is worse than no snapshot at all.
+        if (failedParks.length === 0 && staleParks.length === 0) {
+          try {
+            localStorage.setItem(`npd_snapshot_${periodQuery}`, JSON.stringify({ data: freshSummary, savedAt: new Date().toISOString() }));
+          } catch { /* storage full/unavailable — non-fatal, just skip snapshotting */ }
+        }
       }
       if (failedParks.length > 0) {
         setSummaryError(
-          `${failedParks.length} of ${PARK_LIST.length} parks failed to load (after 3 attempts each) — missing: ${failedParks.join(', ')}. ` +
+          `${failedParks.length} of ${PARK_LIST.length} parks failed to load (after 4 attempts each, including a full 60s wait) — missing: ${failedParks.join(', ')}. ` +
           `${Object.keys(parks).length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${lastError}` +
           (staleParks.length > 0 ? ` Note: ${staleParks.join(', ')} are showing older cached data (fresh load failed) — check individual Park Detail for exact age.` : '')
         );
       } else if (staleParks.length > 0) {
-        setSummaryError(`${staleParks.join(', ')} are showing older cached data (a fresh load failed after 3 attempts) — check individual Park Detail for exact age.`);
+        setSummaryError(`${staleParks.join(', ')} are showing older cached data (a fresh load failed after 4 attempts) — check individual Park Detail for exact age.`);
       }
       setSummaryLoading(false);
     })();
@@ -298,8 +358,8 @@ export default function NPD() {
           <button
             className="mo-select"
             onClick={handleDownloadExcel}
-            disabled={!summary || excelExporting}
-            style={{ cursor: (!summary || excelExporting) ? 'not-allowed' : 'pointer', opacity: (!summary || excelExporting) ? 0.6 : 1 }}
+            disabled={!summary || excelExporting || summaryLoading}
+            style={{ cursor: (!summary || excelExporting || summaryLoading) ? 'not-allowed' : 'pointer', opacity: (!summary || excelExporting || summaryLoading) ? 0.6 : 1 }}
           >
             {excelExporting ? (excelProgress || 'Generating…') : '⬇ Download NPD Excel Data'}
           </button>
@@ -339,6 +399,11 @@ export default function NPD() {
       </div>
 
       {/* ── Summary tables ── */}
+      {summaryLoading && snapshotTimestamp && (
+        <div className="npd-loading" style={{ background: '#eff6ff', borderColor: '#93c5fd', color: '#1d4ed8' }}>
+          ℹ Showing your last successful load (from {new Date(snapshotTimestamp).toLocaleString()}) while today's fresh data loads underneath — this will be replaced automatically once ready.
+        </div>
+      )}
       {summaryLoading && (
         <div className="npd-loading">
           <span className="npd-spinner" /> Loading summary — {parksLoaded}/{PARK_LIST.length} parks done (one at a time, so one park's issue can never affect another's)…
@@ -351,7 +416,7 @@ export default function NPD() {
           ⚠ The tables below may be incomplete or from an earlier load — see the error above for what's missing and why.
         </div>
       )}
-      {summary && !summaryLoading && (
+      {summary && (
         <>
           <div className="tbl-wrap no-scroll npd-park-table">
             <table>

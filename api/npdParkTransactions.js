@@ -188,7 +188,9 @@ export default async function handler(req, res) {
     const liveFromDate = '2020-04-01';
     const liveToDate = new Date().toISOString().slice(0, 10);
 
-    const accountResults = await processBatched(parkAccounts, 3, 1500, async (acct) => {
+    // Paced at ~85 req/min (well under Zoho's 100/min limit) rather than
+    // right at the edge — a real safety margin, not just barely under.
+    const accountResults = await processBatched(parkAccounts, 3, 1800, async (acct) => {
       const txns = await fetchAccountTransactions(H, ORG, acct.account_id, liveFromDate, liveToDate);
       const cls = classify(acct.account_name, park, customClassifications);
       return txns.map(t => ({
@@ -221,7 +223,7 @@ export default async function handler(req, res) {
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
 
-    const billResults = await processBatched(allNewBills, 3, 1500, async ({ bill: b, projectName }) => {
+    const billResults = await processBatched(allNewBills, 3, 1800, async ({ bill: b, projectName }) => {
       const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
       billDetailCallsMade++;
       const lineItems = dd.bill?.line_items || [];
