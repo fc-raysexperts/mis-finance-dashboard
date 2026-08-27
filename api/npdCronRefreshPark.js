@@ -82,18 +82,27 @@ export default async function handler(req, res) {
     const coaBillNumbers = new Set(allTxns.map(t => t.bill_number).filter(Boolean));
 
     const matchedProjects = matchParkProjects(projects, keywords);
+    const parkProjectIds = new Set(matchedProjects.map(p => p.project_id));
     let allNewBills = [];
     for (const proj of matchedProjects) {
       const bills = await fetchProjectBills(H, ORG, proj.project_id);
       const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && (b.date || '') >= fromDate && (b.date || '') <= toDate);
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
+    const uniqueBillsById = new Map();
+    for (const entry of allNewBills) uniqueBillsById.set(entry.bill.bill_id, entry);
+    allNewBills = [...uniqueBillsById.values()];
+
     const billResults = await processBatched(allNewBills, 3, 1600, async ({ bill: b, projectName }) => {
       const lineItems = await fetchBillDetailCached(H, ORG, b.bill_id);
       if (lineItems.length === 0) {
         return [{ date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: null, category: 'Unclassified', head_grouping: 'Unclassified', source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0 }];
       }
-      return lineItems.map(li => {
+      // Only an item whose OWN project_id genuinely matches one of THIS
+      // park's discovered NPD projects — see npdParkTransactions.js for
+      // the full explanation of why the whole bill was never correct.
+      const ownItems = lineItems.filter(li => parkProjectIds.has(li.project_id));
+      return ownItems.map(li => {
         const cls = classifyFlatAccount(li.account_name, customClassifications);
         return { date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: li.account_name || null, category: cls.category, head_grouping: cls.head_grouping, source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0 };
       });

@@ -216,6 +216,9 @@ export default async function handler(req, res) {
     const projectsResult = await fetchAllProjects(H, ORG);
     const projects = projectsResult.data;
     const matchedProjects = matchParkProjects(projects, keywords);
+    // The set of project_ids that genuinely belong to THIS park — used
+    // below to filter individual line items, not whole bills.
+    const parkProjectIds = new Set(matchedProjects.map(p => p.project_id));
     let newFromProjectBills = 0;
     let billDetailCallsMade = 0;
     let allNewBills = [];
@@ -225,6 +228,12 @@ export default async function handler(req, res) {
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
+    // A bill can be tagged (at bill level) to multiple parks' projects at
+    // once (e.g. one freight bill covering deliveries to several parks) —
+    // dedupe so we never fetch the same bill's full detail more than once.
+    const uniqueBillsById = new Map();
+    for (const entry of allNewBills) uniqueBillsById.set(entry.bill.bill_id, entry);
+    allNewBills = [...uniqueBillsById.values()];
 
     const billResults = await processBatched(allNewBills, 3, 1600, async ({ bill: b, projectName }) => {
       const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${b.bill_id}?${ORG}`, H);
@@ -238,7 +247,17 @@ export default async function handler(req, res) {
           source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0,
         }];
       }
-      return lineItems.map(li => {
+      // THE FIX — a bill can genuinely contain items for several different
+      // parks (or entirely unrelated business) mixed together. Previously
+      // this took EVERY item on a bill found via this park's project,
+      // regardless of which specific item actually belonged here — meaning
+      // a park could get credited for another park's costs entirely, while
+      // that other park never saw them at all. Now, only an item whose OWN
+      // project_id genuinely matches one of THIS park's discovered NPD
+      // projects gets counted here — every other item on the same bill is
+      // correctly left for whichever park (if any) it actually belongs to.
+      const ownItems = lineItems.filter(li => parkProjectIds.has(li.project_id));
+      return ownItems.map(li => {
         const cls = classifyFlatAccount(li.account_name, customClassifications);
         return {
           date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill',

@@ -96,7 +96,24 @@ export function matchParkProjects(projects, keywords) {
     const isNpdDesignated = projectName.includes('npd');
     const tokens = projectName.split(/[^a-z0-9]+/).filter(Boolean);
     const hasValidComponentSuffix = tokens.some(t => VALID_COMPONENT_SUFFIXES.has(t));
-    return isRealParkCustomer && isNpdDesignated && hasValidComponentSuffix;
+
+    // Standard, expected shape: a genuine park customer OR an explicit NPD
+    // tag, combined with a structured component suffix (BW/Land/MCR/PSS/TL).
+    // Covers the vast majority of NPD projects, including ones not yet
+    // created — any future "NPD - [Park] - [Component]" project matches
+    // automatically with zero code changes needed, regardless of spacing
+    // or capitalization (all comparisons here are already lowercase, and
+    // token-splitting on any non-alphanumeric character makes this
+    // naturally insensitive to hyphen/space formatting differences).
+    if ((isRealParkCustomer || isNpdDesignated) && hasValidComponentSuffix) return true;
+
+    // Rare legacy exception: an older, standalone project with no
+    // component breakdown at all (e.g. "Kolyat Solar Park NPD"), but
+    // explicit enough — both "npd" AND "solar park" in its own project
+    // name — that it's very unlikely to be a false positive.
+    if (isNpdDesignated && projectName.includes('solar park')) return true;
+
+    return false;
   });
 }
 

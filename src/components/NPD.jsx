@@ -33,6 +33,32 @@ function fmtOB(v) {
   return (v === null || v === undefined) ? '—' : fmt(v);
 }
 
+// Indian fiscal year (Apr-Mar) that "today" currently falls in, as a
+// 2-digit end-year (e.g. 27 for FY ending March 2027) — matches the same
+// short form used by the fy dropdown/state elsewhere in this component.
+function getCurrentFiscalYearShort() {
+  const now = new Date();
+  const endYear = now.getMonth() + 1 >= 4 ? now.getFullYear() + 1 : now.getFullYear();
+  return endYear % 100;
+}
+
+// Client-side mirror of the server's derivePeriodFromFullData — filters an
+// already-fetched transaction list by date range and recomputes the
+// aggregates, entirely in the browser. Used to proactively build a second
+// snapshot (current FY) from data we already have in hand after a Total
+// load, with zero additional network calls.
+function deriveClientSidePeriod(transactions, fromDate, toDate) {
+  const filtered = (transactions || []).filter(t => (t.date || '') >= fromDate && (t.date || '') <= toDate);
+  const total = Math.round(filtered.reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const cwip_total = Math.round(filtered.filter(t => t.head_grouping === 'CWIP').reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const iaud_total = Math.round(filtered.filter(t => t.head_grouping === 'IAUD').reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const category_totals = {};
+  for (const t of filtered) category_totals[t.category] = Math.round(((category_totals[t.category] || 0) + t.amount) * 100) / 100;
+  const unclassified_count = filtered.filter(t => t.head_grouping === 'Unclassified').length;
+  const account_count = new Set(filtered.map(t => t.account_name).filter(Boolean)).size;
+  return { account_count, total, cwip_total, iaud_total, category_totals, unclassified_count };
+}
+
 function buildPeriodQuery({ periodType, fy, quarter, year, month }) {
   if (periodType === 'yearly') return `period=yearly&fy=${fy}`;
   if (periodType === 'quarterly') return `period=quarterly&fy=${fy}&quarter=${quarter}`;
@@ -293,6 +319,28 @@ export default function NPD() {
           try {
             localStorage.setItem(`npd_snapshot_${periodQuery}`, JSON.stringify({ data: freshSummary, savedAt: new Date().toISOString() }));
           } catch { /* storage full/unavailable — non-fatal, just skip snapshotting */ }
+
+          // Proactive extra snapshot: if this WAS the Total view, also
+          // derive and save the current fiscal year — entirely from data
+          // already in hand (each park's full transaction list), zero
+          // extra network calls. Means switching to "this year" after a
+          // Total load also gets an instant snapshot, not just reloading
+          // the exact same period you were already on.
+          if (periodType === 'total') {
+            try {
+              const currentFy = getCurrentFiscalYearShort();
+              const fyStartYear = 2000 + currentFy - 1;
+              const fyFromDate = `${fyStartYear}-04-01`;
+              const fyToDate = `${2000 + currentFy}-03-31`;
+              const derivedParks = {};
+              for (const [parkName, data] of Object.entries(fullData)) {
+                derivedParks[parkName] = deriveClientSidePeriod(data.transactions, fyFromDate, fyToDate);
+              }
+              const derivedSummary = { parks: derivedParks, sum: computeSumRow(derivedParks) };
+              const fyPeriodQuery = `period=yearly&fy=${currentFy}`;
+              localStorage.setItem(`npd_snapshot_${fyPeriodQuery}`, JSON.stringify({ data: derivedSummary, savedAt: new Date().toISOString() }));
+            } catch { /* non-fatal — this is a bonus snapshot, not the primary one */ }
+          }
         }
       }
       if (failedParks.length > 0) {
