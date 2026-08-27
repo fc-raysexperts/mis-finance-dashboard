@@ -43,15 +43,22 @@ export default async function handler(req, res) {
     }
   }
 
+  // Deletes are independent, lightweight, order-doesn't-matter operations —
+  // running them one at a time was the real cause of the timeout once this
+  // list doubled in size. Parallel batches of 50 finish far faster while
+  // staying reasonable about how many concurrent requests Upstash sees at
+  // once, rather than either a slow sequential loop or firing 2000+ requests
+  // all in one instant.
   let deletedCount = 0;
   const errors = [];
-  for (const key of keysToDelete) {
-    try {
-      const result = await redis.del(key);
-      if (result) deletedCount++;
-    } catch (e) {
-      errors.push({ key, error: e.message });
-    }
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
+    const batch = keysToDelete.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(batch.map(key => redis.del(key)));
+    results.forEach((r, idx) => {
+      if (r.status === 'fulfilled' && r.value) deletedCount++;
+      else if (r.status === 'rejected') errors.push({ key: batch[idx], error: r.reason?.message || String(r.reason) });
+    });
   }
 
   return res.status(200).json({
