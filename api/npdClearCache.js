@@ -31,6 +31,15 @@ export default async function handler(req, res) {
   for (const park of Object.keys(PARK_KEYWORDS)) {
     for (const label of periodLabels) {
       keysToDelete.push(`npd:cache:park_full:${park}:${label}`);
+      // FIXED — this was the actual reason a real code fix could deploy
+      // successfully and still appear to change nothing: the separate,
+      // longer-lived (7-day) "last known good" fallback cache was never
+      // cleared here. If a live recomputation hit any transient hiccup
+      // after a regular clear, the system would correctly (by its own
+      // design) fall back to this backup — which could still be full of
+      // pre-fix data for up to a week, silently masking whether a fix
+      // actually took effect.
+      keysToDelete.push(`npd:cache:park_lastknown:${park}:${label}`);
     }
   }
 
