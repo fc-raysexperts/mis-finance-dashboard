@@ -92,7 +92,17 @@ export function matchParkProjects(projects, keywords) {
   return projects.filter(p => {
     const customerName = (p.customer_name || '').toLowerCase();
     const projectName = (p.project_name || '').toLowerCase();
-    const isRealParkCustomer = keywords.some(kw => customerName.includes(kw)) && customerName.includes('solar park');
+
+    // MANDATORY, checked first, for every path below. Without this gate,
+    // a project could match regardless of which park's keywords were
+    // actually passed in — exactly the bug just found and fixed here:
+    // "npd" + a generic component suffix (BW/Land/MCR/PSS/TL) is true for
+    // nearly every real NPD project, so skipping this check meant almost
+    // every project matched almost every park, all at once.
+    const hasThisParkKeyword = keywords.some(kw => customerName.includes(kw) || projectName.includes(kw));
+    if (!hasThisParkKeyword) return false;
+
+    const isRealParkCustomer = customerName.includes('solar park');
     const isNpdDesignated = projectName.includes('npd');
     const tokens = projectName.split(/[^a-z0-9]+/).filter(Boolean);
     const hasValidComponentSuffix = tokens.some(t => VALID_COMPONENT_SUFFIXES.has(t));
@@ -110,7 +120,8 @@ export function matchParkProjects(projects, keywords) {
     // Rare legacy exception: an older, standalone project with no
     // component breakdown at all (e.g. "Kolyat Solar Park NPD"), but
     // explicit enough — both "npd" AND "solar park" in its own project
-    // name — that it's very unlikely to be a false positive.
+    // name — that it's very unlikely to be a false positive. The mandatory
+    // keyword gate above already scopes this to the correct park.
     if (isNpdDesignated && projectName.includes('solar park')) return true;
 
     return false;
