@@ -618,7 +618,7 @@ export default function NPD() {
               <thead>
                 <tr>
                   <th>Date</th><th>Vendor</th><th>Type</th><th>Bill #</th>
-                  <th>Account</th><th>Category</th><th>Head</th><th style={{ textAlign: 'right' }}>Amount</th>
+                  <th>Account</th><th>Project Name</th><th>Category</th><th>Head</th><th style={{ textAlign: 'right' }}>Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -628,7 +628,8 @@ export default function NPD() {
                     <td>{t.vendor}</td>
                     <td>{t.transaction_type}</td>
                     <td>{t.bill_number}</td>
-                    <td>{t.account_name || t.project_name || '—'}</td>
+                    <td>{t.account_name || '—'}</td>
+                    <td>{t.project_name || '—'}</td>
                     <td>{t.category}</td>
                     <td>{t.head_grouping}</td>
                     <td style={{ textAlign: 'right' }}>{fmt(t.amount)}</td>

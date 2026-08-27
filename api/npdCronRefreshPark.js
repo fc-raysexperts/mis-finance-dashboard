@@ -104,7 +104,7 @@ export default async function handler(req, res) {
       const ownItems = lineItems.filter(li => parkProjectIds.has(li.project_id));
       return ownItems.map(li => {
         const cls = classifyFlatAccount(li.account_name, customClassifications);
-        return { date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: li.account_name || null, category: cls.category, head_grouping: cls.head_grouping, source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0 };
+        return { date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: li.project_name || projectName, account_name: li.account_name || null, category: cls.category, head_grouping: cls.head_grouping, source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0 };
       });
     });
     allTxns = allTxns.concat(billResults.flat());

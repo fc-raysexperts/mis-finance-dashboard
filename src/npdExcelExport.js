@@ -1,13 +1,10 @@
 import * as XLSX from 'xlsx';
 import { fmt } from './utils.js';
 
-// Descending by real Total Till Date cost — matches the website's table
-// column order exactly, so the downloaded file's columns aren't in a
-// different order than what you actually see on screen.
 const PARK_LIST = [
-  'Dechu', 'Lunkaransar', 'SS Nagar', 'Pugal', 'Panchu', 'Kolayat', 'Tosham',
-  'Jaisalmer', 'Napasar', 'Bhamatsar', 'Sanchore', 'Jasarasar', 'Baithwasiya',
-  'Sheruna', 'Thukariyasar',
+  'Jaisalmer', 'Kolayat', 'Dechu', 'Lunkaransar', 'Napasar', 'Panchu', 'Pugal',
+  'Bhamatsar', 'Sanchore', 'Tosham', 'SS Nagar', 'Thukariyasar',
+  'Baithwasiya', 'Jasarasar', 'Sheruna',
 ];
 const CATEGORIES = [
   'Registration Fees', 'Commission', 'Land Lease Registration', 'Land Lease Expenses',
@@ -60,25 +57,30 @@ function buildCategorySheet(parks, sum, periodType) {
 }
 
 // Matches the on-screen Park Detail table's column proportions exactly
-// (7/27/7/8/23/13/6/9 %), scaled to a 140-character-wide sheet for
+// (6/24/6/7/20/12/11/5/9 %), scaled to a 142-character-wide sheet for
 // comfortable absolute widths rather than tiny percentage-scaled ones.
+// Project Name is its own column now (was previously combined with
+// Account) — shows which NPD project a bill came through, blank for
+// chart-of-accounts transactions, so the auditor can see exactly which
+// method sourced each row, same as the website.
 function buildParkDetailSheet(parkData) {
   const rows = [
-    ['Date', 'Vendor', 'Type', 'Bill #', 'Account', 'Category', 'Head', 'Amount'],
+    ['Date', 'Vendor', 'Type', 'Bill #', 'Account', 'Project Name', 'Category', 'Head', 'Amount'],
     ...(parkData?.transactions || []).map(t => [
       t.date, t.vendor, t.transaction_type, t.bill_number,
-      t.account_name || t.project_name || '—', t.category, t.head_grouping, t.amount,
+      t.account_name || '—', t.project_name || '—', t.category, t.head_grouping, t.amount,
     ]),
   ];
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [
     { wch: 10 }, // Date
-    { wch: 38 }, // Vendor
-    { wch: 10 }, // Type
-    { wch: 11 }, // Bill #
-    { wch: 32 }, // Account
-    { wch: 18 }, // Category
-    { wch: 8 },  // Head
+    { wch: 34 }, // Vendor
+    { wch: 8 },  // Type
+    { wch: 10 }, // Bill #
+    { wch: 28 }, // Account
+    { wch: 17 }, // Project Name
+    { wch: 15 }, // Category
+    { wch: 7 },  // Head
     { wch: 13 }, // Amount
   ];
   return ws;

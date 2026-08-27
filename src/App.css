@@ -617,11 +617,12 @@ tr.head-group-end td {
 /* Park Detail transaction table — column widths per request:
    Date/Type/Bill#/Head/Amount narrowed, Vendor/Account widened, Category
    unchanged. Sums to 100%. VDLs after Type (col 3) and after Account (col 5). */
-.npd-detail-table th:nth-child(1), .npd-detail-table td:nth-child(1) { width: 7%; }  /* Date */
-.npd-detail-table th:nth-child(2), .npd-detail-table td:nth-child(2) { width: 27%; border-right: 1.5px solid #94a3b8; } /* Vendor + VDL */
-.npd-detail-table th:nth-child(3), .npd-detail-table td:nth-child(3) { width: 7%; }  /* Type */
-.npd-detail-table th:nth-child(4), .npd-detail-table td:nth-child(4) { width: 8%; }  /* Bill # */
-.npd-detail-table th:nth-child(5), .npd-detail-table td:nth-child(5) { width: 23%; border-right: 1.5px solid #94a3b8; } /* Account + VDL */
-.npd-detail-table th:nth-child(6), .npd-detail-table td:nth-child(6) { width: 13%; } /* Category — unchanged */
-.npd-detail-table th:nth-child(7), .npd-detail-table td:nth-child(7) { width: 6%; }  /* Head */
-.npd-detail-table th:nth-child(8), .npd-detail-table td:nth-child(8) { width: 9%; }  /* Amount */
+.npd-detail-table th:nth-child(1), .npd-detail-table td:nth-child(1) { width: 6%; }  /* Date */
+.npd-detail-table th:nth-child(2), .npd-detail-table td:nth-child(2) { width: 24%; border-right: 1.5px solid #94a3b8; } /* Vendor + VDL */
+.npd-detail-table th:nth-child(3), .npd-detail-table td:nth-child(3) { width: 6%; }  /* Type */
+.npd-detail-table th:nth-child(4), .npd-detail-table td:nth-child(4) { width: 7%; }  /* Bill # */
+.npd-detail-table th:nth-child(5), .npd-detail-table td:nth-child(5) { width: 20%; border-right: 1.5px solid #94a3b8; } /* Account + VDL */
+.npd-detail-table th:nth-child(6), .npd-detail-table td:nth-child(6) { width: 12%; } /* Project Name — new: shows which NPD project a bill came through, blank for chart-of-accounts transactions */
+.npd-detail-table th:nth-child(7), .npd-detail-table td:nth-child(7) { width: 11%; } /* Category */
+.npd-detail-table th:nth-child(8), .npd-detail-table td:nth-child(8) { width: 5%; }  /* Head */
+.npd-detail-table th:nth-child(9), .npd-detail-table td:nth-child(9) { width: 9%; }  /* Amount */
