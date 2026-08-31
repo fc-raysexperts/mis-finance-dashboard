@@ -1,6 +1,6 @@
 import { getAccessToken } from './_tokenCache.js';
 import {
-  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, sleep,
+  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, sleep,
   classify, classifyFlatAccount, matchParkProjects,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
@@ -167,6 +167,7 @@ export default async function handler(req, res) {
     const parkAccounts = accounts
       .filter(a => {
         if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
+        if (MANUALLY_EXCLUDED_ACCOUNTS.has((a.account_name || '').toLowerCase().trim())) return false;
         const childName = (a.account_name || '').toLowerCase();
         const parentName = (a.parent_account_name || '').toLowerCase();
         return keywords.some(kw => childName.includes(kw) || parentName.includes(kw));

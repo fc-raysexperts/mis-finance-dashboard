@@ -21,6 +21,16 @@ export const PARK_KEYWORDS = {
   'Sheruna':      ['sheruna'],
 };
 export const NON_NPD_ACCOUNT_TYPES = new Set(['bank', 'cash']);
+
+// Manually excluded accounts — confirmed, verified false positives where a
+// park keyword coincidentally appears inside a person's name (an Imprest
+// account is a personal cash advance, unrelated to any park). This is
+// deliberately a simple, explicit, hand-maintained list for these two
+// specific accounts — not a general word-boundary or pattern-based fix.
+export const MANUALLY_EXCLUDED_ACCOUNTS = new Set([
+  'amar singh kolayat - imprest',
+  'k r pugalia imprest',
+]);
 export const WATCHED_FALLBACK_ONLY_PARKS = new Set(['Thukariyasar', 'Baithwasiya', 'Jasarasar', 'Sheruna']);
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -1,5 +1,5 @@
 import {
-  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES,
+  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS,
   classify, classifyFlatAccount, matchParkProjects,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
@@ -57,6 +57,7 @@ export default async function handler(req, res) {
 
     const parkAccounts = accounts.filter(a => {
       if (NON_NPD_ACCOUNT_TYPES.has(a.account_type)) return false;
+      if (MANUALLY_EXCLUDED_ACCOUNTS.has((a.account_name || '').toLowerCase().trim())) return false;
       const cn = (a.account_name || '').toLowerCase();
       const pn = (a.parent_account_name || '').toLowerCase();
       return keywords.some(kw => cn.includes(kw) || pn.includes(kw));
