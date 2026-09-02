@@ -87,7 +87,10 @@ export default async function handler(req, res) {
     let allNewBills = [];
     for (const proj of matchedProjects) {
       const bills = await fetchProjectBills(H, ORG, proj.project_id);
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && (b.date || '') >= fromDate && (b.date || '') <= toDate);
+      // FIXED — filter by Transaction Posting Date, not plain bill date.
+      // See npdParkTransactions.js for the full explanation and confirmed
+      // real example.
+      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
     const uniqueBillsById = new Map();
@@ -97,7 +100,7 @@ export default async function handler(req, res) {
     const billResults = await processBatched(allNewBills, 3, 1600, async ({ bill: b, projectName }) => {
       const lineItems = await fetchBillDetailCached(H, ORG, b.bill_id);
       if (lineItems.length === 0) {
-        return [{ date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: null, category: 'Unclassified', head_grouping: 'Unclassified', source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0 }];
+        return [{ date: b.txn_value_date || b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: null, category: 'Unclassified', head_grouping: 'Unclassified', source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0 }];
       }
       // Only an item whose OWN project_id genuinely matches one of THIS
       // park's discovered NPD projects — see npdParkTransactions.js for
@@ -105,7 +108,7 @@ export default async function handler(req, res) {
       const ownItems = lineItems.filter(li => parkProjectIds.has(li.project_id));
       return ownItems.map(li => {
         const cls = classifyFlatAccount(li.account_name, customClassifications);
-        return { date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: li.project_name || projectName, account_name: li.account_name || null, category: cls.category, head_grouping: cls.head_grouping, source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0 };
+        return { date: b.txn_value_date || b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: li.project_name || projectName, account_name: li.account_name || null, category: cls.category, head_grouping: cls.head_grouping, source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0 };
       });
     });
     allTxns = allTxns.concat(billResults.flat());

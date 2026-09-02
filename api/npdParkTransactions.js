@@ -225,7 +225,14 @@ export default async function handler(req, res) {
     let allNewBills = [];
     for (const proj of matchedProjects) {
       const bills = await fetchProjectBills(H, ORG, proj.project_id);
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && (b.date || '') >= liveFromDate && (b.date || '') <= liveToDate);
+      // FIXED — was filtering by the plain "bill date" (when the vendor
+      // dated the invoice), but a bill's real accounting period is
+      // determined by its Transaction Posting Date instead, which can
+      // genuinely differ by weeks or land in a different period entirely
+      // (confirmed real example: Bill #365, bill date 13/03/2026, but
+      // txn_value_date 28/04/2026 — a different month). Falls back to the
+      // plain date only if txn_value_date is ever missing.
+      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
@@ -242,7 +249,7 @@ export default async function handler(req, res) {
       const lineItems = dd.bill?.line_items || [];
       if (lineItems.length === 0) {
         return [{
-          date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill',
+          date: b.txn_value_date || b.date, vendor: b.vendor_name || '', transaction_type: 'bill',
           bill_number: b.bill_number, branch: null, project_name: projectName, account_name: null,
           category: 'Unclassified', head_grouping: 'Unclassified',
           source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0,
@@ -261,7 +268,7 @@ export default async function handler(req, res) {
       return ownItems.map(li => {
         const cls = classifyFlatAccount(li.account_name, customClassifications);
         return {
-          date: b.date, vendor: b.vendor_name || '', transaction_type: 'bill',
+          date: b.txn_value_date || b.date, vendor: b.vendor_name || '', transaction_type: 'bill',
           bill_number: b.bill_number, branch: null, project_name: li.project_name || projectName, account_name: li.account_name || null,
           category: cls.category, head_grouping: cls.head_grouping,
           source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0,
