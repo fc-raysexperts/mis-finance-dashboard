@@ -304,6 +304,37 @@ export default function NPD() {
         }
       }
 
+      // Channel 3 (generic account transactions — Capital Work in
+      // Progress, Intangible Asset Under Development) is company-wide, not
+      // park-scoped, and normally kept warm by its own dedicated daily
+      // cron, scheduled to run before any individual park's own cron. This
+      // checks whether it's genuinely missing right now — not routinely on
+      // every load, only as a real fallback (e.g. first deployment, or the
+      // cron failed that day) — by looking at the actual data that just
+      // loaded, rather than trusting a fragile per-park signal that would
+      // need threading through every cache path.
+      if (!cancelled && Object.keys(parks).length > 0) {
+        const hasAnyGenericAccountData = Object.values(fullData).some(d =>
+          (d.transactions || []).some(t => t.source === 'generic_account_supplemental')
+        );
+        if (!hasAnyGenericAccountData) {
+          try {
+            await fetch('/api/npdGenericAccountsRefresh');
+            // Re-fetch every already-successful park once more — now that
+            // Channel 3 is cached, this reads from cache only, so it
+            // should be fast, not a repeat of the full live computation.
+            for (const park of Object.keys(parks)) {
+              if (cancelled) return;
+              try {
+                const d = await fetchOnePark(park);
+                parks[park] = extractSummaryFields(d);
+                fullData[park] = d;
+              } catch { /* keep the pre-refresh data for this park if the re-fetch fails */ }
+            }
+          } catch { /* Channel 3 refresh failed — proceed with what already loaded rather than fail the whole dashboard */ }
+        }
+      }
+
       const failedParks = PARK_LIST.filter(p => !parks[p]);
       if (cancelled) return;
 
@@ -628,8 +659,8 @@ export default function NPD() {
                     <td>{t.vendor}</td>
                     <td>{t.transaction_type}</td>
                     <td>{t.bill_number}</td>
-                    <td>{t.account_name || '—'}</td>
-                    <td>{t.project_name || '—'}</td>
+                    <td style={t.source === 'generic_account_supplemental' ? { fontWeight: 700 } : undefined}>{t.account_name || '—'}</td>
+                    <td style={t.source === 'project_tagged_bill_supplemental' ? { fontWeight: 700 } : undefined}>{t.project_name || '—'}</td>
                     <td>{t.category}</td>
                     <td>{t.head_grouping}</td>
                     <td style={{ textAlign: 'right' }}>{fmt(t.amount)}</td>

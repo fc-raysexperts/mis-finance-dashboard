@@ -7,9 +7,11 @@
     "api/npdCronRefreshPark.js": { "maxDuration": 300 },
     "api/npdParkTransactions.js": { "maxDuration": 300 },
     "api/npdAllParksSummary.js": { "maxDuration": 300 },
-    "api/npdClearCache.js": { "maxDuration": 60 }
+    "api/npdClearCache.js": { "maxDuration": 60 },
+    "api/npdGenericAccountsRefresh.js": { "maxDuration": 300 }
   },
   "crons": [
+    { "path": "/api/npdGenericAccountsRefresh",             "schedule": "25 0 * * *" },
     { "path": "/api/npdCronRefreshPark?park=Jaisalmer",    "schedule": "30 0 * * *" },
     { "path": "/api/npdCronRefreshPark?park=Kolayat",      "schedule": "35 0 * * *" },
     { "path": "/api/npdCronRefreshPark?park=Dechu",        "schedule": "40 0 * * *" },

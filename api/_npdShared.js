@@ -436,3 +436,95 @@ export async function getZohoAuth() {
   const ORG_ID = process.env.VITE_ZB_ORG_ID;
   return { H: { Authorization: `Zoho-oauthtoken ${access_token}` }, ORG: `organization_id=${ORG_ID}` };
 }
+
+// Channel 3 — generic account transactions (Capital Work in Progress,
+// Intangible Asset Under Development). Unlike Channels 1/2, this is
+// naturally company-wide, not park-scoped, so it's fetched once and then
+// filtered per park by whichever code calls this. Journal-type entries are
+// deliberately skipped for now (mostly internal ledger-transfer
+// reclassifications, not new spend) — only bill-type transactions are
+// considered. Gajner/Bikaner is explicitly excluded — that location has
+// been discarded, not just unmatched.
+const GENERIC_ACCOUNTS = ['Intangible Asset Under Development', 'Capital Work in Progress'];
+const EXCLUDED_LOCATIONS = ['gajner', 'bikaner'];
+
+function matchParkFromText(text, keywordsMap) {
+  const lower = (text || '').toLowerCase();
+  if (EXCLUDED_LOCATIONS.some(loc => lower.includes(loc))) return null;
+  for (const [park, keywords] of Object.entries(keywordsMap)) {
+    if (keywords.some(kw => lower.includes(kw))) return park;
+  }
+  return null;
+}
+
+export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allProjects, fromDate, toDate) {
+  const results = [];
+
+  for (const accountName of GENERIC_ACCOUNTS) {
+    const acct = allAccounts.find(a => (a.account_name || '').toLowerCase() === accountName.toLowerCase());
+    if (!acct) continue;
+    const headGrouping = accountName === 'Capital Work in Progress' ? 'CWIP' : 'IAUD';
+
+    const rule = encodeURIComponent(JSON.stringify({
+      columns: [{ index: 1, field: 'account_id', group: 'report', comparator: 'in', value: [acct.account_id] }],
+      criteria_string: '1',
+    }));
+    const url = `https://www.zohoapis.in/books/v3/reports/accounttransaction?${ORG}&from_date=${fromDate}&to_date=${toDate}&rule=${rule}`;
+    const r = await fetchZohoJson(url, H);
+    const entries = r.account_transactions || [];
+    let allTxns = [];
+    for (const e of entries) for (const v of Object.values(e || {})) if (Array.isArray(v)) allTxns = allTxns.concat(v);
+    const billTxns = allTxns.filter(t => t.transaction_type === 'bill');
+
+    const attributed = await processBatched(billTxns, 3, 1800, async (t) => {
+      const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${t.transaction_id}?${ORG}`, H);
+      const lineItems = dd.bill?.line_items || [];
+      const relevantLine = lineItems.find(li => li.account_name === accountName) || lineItems[0];
+      if (!relevantLine) return null;
+
+      const customerName = relevantLine.customer_name || '';
+      const projectName = relevantLine.project_name || '';
+      const projectId = relevantLine.project_id || '';
+
+      // Try customer_name first, fall back to project_name if that gives
+      // nothing usable. Neither ever matches Gajner/Bikaner.
+      const park = matchParkFromText(customerName, PARK_KEYWORDS) || matchParkFromText(projectName, PARK_KEYWORDS);
+
+      if (park) {
+        // Regardless of WHICH signal found this park, check whether this
+        // exact project_id is already one of THAT park's own, formally-
+        // verified NPD projects — if so, Channel 2 already has this bill,
+        // skip it here to avoid double-counting. Presence of a project_id
+        // alone is not enough — it must belong to the matched park.
+        const parkProjects = matchParkProjects(allProjects, PARK_KEYWORDS[park]);
+        const parkProjectIds = new Set(parkProjects.map(p => p.project_id));
+        if (projectId && parkProjectIds.has(projectId)) {
+          return { skipped_duplicate: true, bill_number: dd.bill.bill_number, park };
+        }
+      }
+
+      const cls = classifyFlatAccount(relevantLine.account_name, {});
+      return {
+        date: dd.bill.txn_value_date || dd.bill.date,
+        vendor: dd.bill.vendor_name || '',
+        transaction_type: 'bill',
+        bill_number: dd.bill.bill_number,
+        branch: null,
+        project_name: projectName || null,
+        account_name: accountName,
+        category: cls.category,
+        head_grouping: headGrouping,
+        source: 'generic_account_supplemental',
+        park: park || 'Unclassified',
+        amount: parseFloat(relevantLine.item_total) || 0,
+      };
+    });
+
+    for (const item of attributed) {
+      if (item) results.push(item);
+    }
+  }
+
+  return results;
+}
+

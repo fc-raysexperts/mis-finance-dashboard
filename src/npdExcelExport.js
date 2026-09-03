@@ -2,9 +2,9 @@ import * as XLSX from 'xlsx';
 import { fmt } from './utils.js';
 
 const PARK_LIST = [
-  'Jaisalmer', 'Kolayat', 'Dechu', 'Lunkaransar', 'Napasar', 'Panchu', 'Pugal',
-  'Bhamatsar', 'Sanchore', 'Tosham', 'SS Nagar', 'Thukariyasar',
-  'Baithwasiya', 'Jasarasar', 'Sheruna',
+  'Dechu', 'Lunkaransar', 'SS Nagar', 'Pugal', 'Panchu', 'Kolayat', 'Tosham',
+  'Jaisalmer', 'Napasar', 'Bhamatsar', 'Sanchore', 'Jasarasar', 'Baithwasiya',
+  'Sheruna', 'Thukariyasar',
 ];
 const CATEGORIES = [
   'Registration Fees', 'Commission', 'Land Lease Registration', 'Land Lease Expenses',

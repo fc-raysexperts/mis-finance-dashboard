@@ -90,7 +90,7 @@ export default async function handler(req, res) {
       // FIXED — filter by Transaction Posting Date, not plain bill date.
       // See npdParkTransactions.js for the full explanation and confirmed
       // real example.
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has(b.bill_number) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
+      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
     const uniqueBillsById = new Map();
@@ -112,6 +112,20 @@ export default async function handler(req, res) {
       });
     });
     allTxns = allTxns.concat(billResults.flat());
+
+    // Channel 3 — same shared, company-wide cache approach as
+    // npdParkTransactions.js. See that file for the full explanation.
+    // Channel 3 — read-only here, same reasoning as npdParkTransactions.js.
+    // Computing it is the dedicated job of npdGenericAccountsRefresh.js,
+    // scheduled to run before the first park's own cron each day.
+    let genericAccountResults = null;
+    if (redis) {
+      try { genericAccountResults = await redis.get('npd:cache:generic_accounts_txns:Total Till Date'); } catch { /* proceed without it */ }
+    }
+    const thisParkGenericTxns = (genericAccountResults || [])
+      .filter(t => !t.skipped_duplicate && t.park === park);
+    allTxns = allTxns.concat(thisParkGenericTxns);
+
     allTxns.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
     const total = Math.round(allTxns.reduce((s, t) => s + t.amount, 0) * 100) / 100;

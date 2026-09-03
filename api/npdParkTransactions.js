@@ -232,7 +232,7 @@ export default async function handler(req, res) {
       // (confirmed real example: Bill #365, bill date 13/03/2026, but
       // txn_value_date 28/04/2026 — a different month). Falls back to the
       // plain date only if txn_value_date is ever missing.
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has(b.bill_number) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
+      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
@@ -276,6 +276,22 @@ export default async function handler(req, res) {
       });
     });
     allTxns = allTxns.concat(billResults.flat());
+
+    // Channel 3 — read-only here. Computing it is now the dedicated job of
+    // api/npdGenericAccountsRefresh.js, run as its own explicit step after
+    // all parks' Channel 1/2 data has loaded — never triggered by an
+    // individual park's own request, since that data is company-wide, not
+    // park-scoped, and would make whichever park loaded first unpredictably
+    // slow. If it isn't cached yet, this park simply proceeds without its
+    // Channel 3 share for now — it will appear once the dedicated refresh
+    // runs and this park's data is re-fetched.
+    let genericAccountResults = null;
+    if (cacheRedis) {
+      try { genericAccountResults = await cacheRedis.get('npd:cache:generic_accounts_txns:Total Till Date'); } catch { /* proceed without it */ }
+    }
+    const thisParkGenericTxns = (genericAccountResults || [])
+      .filter(t => !t.skipped_duplicate && t.park === park);
+    allTxns = allTxns.concat(thisParkGenericTxns);
 
     allTxns.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     const total = Math.round(allTxns.reduce((s, t) => s + t.amount, 0) * 100) / 100;
