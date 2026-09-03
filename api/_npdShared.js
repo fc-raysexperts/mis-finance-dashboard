@@ -45,6 +45,7 @@ export const MANUALLY_EXCLUDED_BILLS = new Set([
   'EPPL/1563/25-26',   // Expel Prosys — reclassified into Lunkaransar Purchase, 28/03/2026
   'HTCPL/25-26/013',   // Hindustan Traffo Control — same reclassification
   'TI/2025-26/520',    // Aumni Transmission Industry — same reclassification (7 line items)
+  'RTPC/001/25-26',    // RK Tech Power Corporation (Panchu) — reclassified via Inventory Adjustment (ref 6448), now counted through Channel 3 instead
 ]);
 
 export const WATCHED_FALLBACK_ONLY_PARKS = new Set(['Thukariyasar', 'Baithwasiya', 'Jasarasar', 'Sheruna']);
@@ -448,6 +449,18 @@ export async function getZohoAuth() {
 export const GENERIC_ACCOUNTS = ['Capital Work in Progress', 'Intangible Asset Under Development'];
 const EXCLUDED_LOCATIONS = ['gajner', 'bikaner'];
 
+// Inventory Adjustment By Quantity entries have no customer_name or
+// project_name at all (a completely different shape from a bill) — the
+// only structured park signal available is sometimes the branch/location
+// field. When that's genuinely a real park name (confirmed: "Pugal" on
+// one real entry), it's used automatically. When it's just "Head Office"
+// (confirmed: true for another real entry that genuinely does belong to
+// Panchu), there's no automatic signal at all — those need explicit,
+// manual confirmation, keyed by the adjustment's own reference_number.
+const MANUALLY_MAPPED_INVENTORY_ADJUSTMENTS = {
+  '6448': 'Panchu', // Rs 2,10,000 — confirmed: reclassified from Bill RTPC/001/25-26
+};
+
 function matchParkFromText(text, keywordsMap) {
   const lower = (text || '').toLowerCase();
   if (EXCLUDED_LOCATIONS.some(loc => lower.includes(loc))) return null;
@@ -523,6 +536,30 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
 
     for (const item of attributed) {
       if (item) results.push(item);
+    }
+
+    // Inventory Adjustment By Quantity — a genuinely different transaction
+    // shape from a bill, with no customer_name/project_name at all.
+    const inventoryAdjustments = allTxns.filter(t => t.transaction_type === 'inventory_adjustment_by_quantity');
+    for (const t of inventoryAdjustments) {
+      const branchLocation = t.branch?.location_name || '';
+      const parkFromBranch = matchParkFromText(branchLocation, PARK_KEYWORDS);
+      const park = parkFromBranch || MANUALLY_MAPPED_INVENTORY_ADJUSTMENTS[t.reference_number] || null;
+
+      results.push({
+        date: t.date,
+        vendor: t.transaction_details || 'Inventory Adjustment',
+        transaction_type: 'inventory_adjustment_by_quantity',
+        bill_number: t.reference_number || null,
+        branch: branchLocation || null,
+        project_name: null,
+        account_name: accountName,
+        category: 'Purchase',
+        head_grouping: headGrouping,
+        source: 'generic_account_supplemental',
+        park: park || 'Unclassified',
+        amount: parseFloat(t.debit) || 0,
+      });
     }
   }
 
