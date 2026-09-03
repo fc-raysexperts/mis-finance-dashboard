@@ -1,6 +1,6 @@
 import { getAccessToken } from './_tokenCache.js';
 import {
-  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, sleep,
+  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS, sleep,
   classify, classifyFlatAccount, matchParkProjects,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
@@ -232,7 +232,7 @@ export default async function handler(req, res) {
       // (confirmed real example: Bill #365, bill date 13/03/2026, but
       // txn_value_date 28/04/2026 — a different month). Falls back to the
       // plain date only if txn_value_date is ever missing.
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
+      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has(b.bill_number) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }

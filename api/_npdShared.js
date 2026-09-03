@@ -30,7 +30,23 @@ export const NON_NPD_ACCOUNT_TYPES = new Set(['bank', 'cash']);
 export const MANUALLY_EXCLUDED_ACCOUNTS = new Set([
   'amar singh kolayat - imprest',
   'k r pugalia imprest',
+  'land at lunkaransar',
+  'panchu intangible assets (npd)',
 ]);
+
+// Specific bills manually excluded from the Projects (NPD) channel —
+// confirmed, via Zoho's own Account Transactions report, to have already
+// been reclassified via Inventory Adjustment into an account we separately
+// capture (Lunkaransar Purchase) — counting both would be a genuine
+// duplicate. Deliberately bill-number-scoped, not account-level, since
+// "Inventory Asset" itself still legitimately holds other, not-yet-
+// reclassified items for other bills that should still count normally.
+export const MANUALLY_EXCLUDED_BILLS = new Set([
+  'EPPL/1563/25-26',   // Expel Prosys — reclassified into Lunkaransar Purchase, 28/03/2026
+  'HTCPL/25-26/013',   // Hindustan Traffo Control — same reclassification
+  'TI/2025-26/520',    // Aumni Transmission Industry — same reclassification (7 line items)
+]);
+
 export const WATCHED_FALLBACK_ONLY_PARKS = new Set(['Thukariyasar', 'Baithwasiya', 'Jasarasar', 'Sheruna']);
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
