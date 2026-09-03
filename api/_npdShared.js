@@ -445,7 +445,7 @@ export async function getZohoAuth() {
 // reclassifications, not new spend) — only bill-type transactions are
 // considered. Gajner/Bikaner is explicitly excluded — that location has
 // been discarded, not just unmatched.
-const GENERIC_ACCOUNTS = ['Intangible Asset Under Development', 'Capital Work in Progress'];
+export const GENERIC_ACCOUNTS = ['Capital Work in Progress', 'Intangible Asset Under Development'];
 const EXCLUDED_LOCATIONS = ['gajner', 'bikaner'];
 
 function matchParkFromText(text, keywordsMap) {
@@ -457,10 +457,11 @@ function matchParkFromText(text, keywordsMap) {
   return null;
 }
 
-export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allProjects, fromDate, toDate) {
+export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allProjects, fromDate, toDate, singleAccountName = null) {
   const results = [];
+  const accountsToProcess = singleAccountName ? [singleAccountName] : GENERIC_ACCOUNTS;
 
-  for (const accountName of GENERIC_ACCOUNTS) {
+  for (const accountName of accountsToProcess) {
     const acct = allAccounts.find(a => (a.account_name || '').toLowerCase() === accountName.toLowerCase());
     if (!acct) continue;
     const headGrouping = accountName === 'Capital Work in Progress' ? 'CWIP' : 'IAUD';

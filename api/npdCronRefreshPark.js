@@ -113,16 +113,19 @@ export default async function handler(req, res) {
     });
     allTxns = allTxns.concat(billResults.flat());
 
-    // Channel 3 — same shared, company-wide cache approach as
-    // npdParkTransactions.js. See that file for the full explanation.
     // Channel 3 — read-only here, same reasoning as npdParkTransactions.js.
     // Computing it is the dedicated job of npdGenericAccountsRefresh.js,
-    // scheduled to run before the first park's own cron each day.
-    let genericAccountResults = null;
+    // called once per account (CWIP, then IAUD), scheduled to run before
+    // the first park's own cron each day.
+    let genericAccountResults = [];
     if (redis) {
-      try { genericAccountResults = await redis.get('npd:cache:generic_accounts_txns:Total Till Date'); } catch { /* proceed without it */ }
+      try {
+        const cwip = await redis.get('npd:cache:generic_accounts_txns:CWIP');
+        const iaud = await redis.get('npd:cache:generic_accounts_txns:IAUD');
+        genericAccountResults = [...(cwip || []), ...(iaud || [])];
+      } catch { /* proceed without it */ }
     }
-    const thisParkGenericTxns = (genericAccountResults || [])
+    const thisParkGenericTxns = genericAccountResults
       .filter(t => !t.skipped_duplicate && t.park === park);
     allTxns = allTxns.concat(thisParkGenericTxns);
 

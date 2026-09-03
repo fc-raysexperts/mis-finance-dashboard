@@ -46,7 +46,11 @@ export default async function handler(req, res) {
   // not park-scoped, so it doesn't belong inside the per-park loop above.
   // Added when Channel 3 was built; without this, clearing the cache would
   // never actually touch this data at all.
-  keysToDelete.push('npd:cache:generic_accounts_txns:Total Till Date');
+  // Channel 3 now stores CWIP and IAUD as two separate keys (not one
+  // combined "Total Till Date" key), so each can be checked and
+  // recomputed independently by the dedicated refresh endpoint.
+  keysToDelete.push('npd:cache:generic_accounts_txns:CWIP');
+  keysToDelete.push('npd:cache:generic_accounts_txns:IAUD');
 
   // Deletes are independent, lightweight, order-doesn't-matter operations —
   // running them one at a time was the real cause of the timeout once this

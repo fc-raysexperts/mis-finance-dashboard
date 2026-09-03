@@ -144,6 +144,10 @@ export default function NPD() {
   const [summaryError, setSummaryError] = useState(null);
   const [parksLoaded, setParksLoaded] = useState(0);
   const [snapshotTimestamp, setSnapshotTimestamp] = useState(null);
+  // What's actually being fetched right now, for a precise loading
+  // message — either one of the two generic accounts (loaded first, in
+  // order) or a specific park (loaded after, by name).
+  const [loadingStage, setLoadingStage] = useState(null);
 
   // Holds each park's COMPLETE response (including full transactions) as
   // the sequential loop fetches them — lets Park Detail reuse this directly
@@ -186,7 +190,7 @@ export default function NPD() {
   //    4-park-chunk design where one failure lost the whole chunk.
   useEffect(() => {
     let cancelled = false;
-    setSummaryLoading(true); setSummaryError(null); setParksLoaded(0);
+    setSummaryLoading(true); setSummaryError(null); setParksLoaded(0); setLoadingStage(null);
     setAllParksFullData({});
 
     // Show a previous successful snapshot instantly, clearly labeled as
@@ -218,6 +222,24 @@ export default function NPD() {
         return d;
       }
 
+      // Channel 3, first — CWIP, then IAUD, exactly in that order. Always
+      // called, every load, but each call is self-checking on the backend:
+      // if that account is already cached for today (the normal case,
+      // once the daily cron has run before any park's own cron), it
+      // returns almost immediately. Only genuinely slow when that
+      // account's cache is actually missing. Guaranteeing this completes
+      // BEFORE any park is requested means every park's own computation
+      // always finds Channel 3 ready on its very first pass — no separate
+      // "detect missing, refresh, reload everything" fallback needed.
+      if (!cancelled) {
+        setLoadingStage({ type: 'generic_account', name: 'Capital Work in Progress' });
+        try { await fetch('/api/npdGenericAccountsRefresh?account=cwip'); } catch { /* proceed regardless — parks will simply be missing this portion if it never resolves */ }
+      }
+      if (!cancelled) {
+        setLoadingStage({ type: 'generic_account', name: 'Intangible Asset Under Development' });
+        try { await fetch('/api/npdGenericAccountsRefresh?account=iaud'); } catch { /* proceed regardless */ }
+      }
+
       // Staged retry: finish a full first pass through every park before
       // ever retrying anything, THEN retry only what failed after a short
       // wait, THEN one final retry after a longer wait. Letting other
@@ -235,6 +257,7 @@ export default function NPD() {
       let remaining = [...FETCH_ORDER];
       for (const park of remaining) {
         if (cancelled) return;
+        setLoadingStage({ type: 'park', name: park });
         try {
           const d = await fetchOnePark(park);
           parks[park] = extractSummaryFields(d);
@@ -250,6 +273,7 @@ export default function NPD() {
         const stillFailed = [];
         for (const park of remaining) {
           if (cancelled) return;
+          setLoadingStage({ type: 'park', name: park });
           try {
             const d = await fetchOnePark(park);
             parks[park] = extractSummaryFields(d);
@@ -269,6 +293,7 @@ export default function NPD() {
         const stillFailed2 = [];
         for (const park of remaining) {
           if (cancelled) return;
+          setLoadingStage({ type: 'park', name: park });
           try {
             const d = await fetchOnePark(park);
             parks[park] = extractSummaryFields(d);
@@ -292,6 +317,7 @@ export default function NPD() {
         await sleep(60000);
         for (const park of remaining) {
           if (cancelled) return;
+          setLoadingStage({ type: 'park', name: park });
           try {
             const d = await fetchOnePark(park);
             parks[park] = extractSummaryFields(d);
@@ -301,37 +327,6 @@ export default function NPD() {
           } catch (e) {
             lastError = e.message;
           }
-        }
-      }
-
-      // Channel 3 (generic account transactions — Capital Work in
-      // Progress, Intangible Asset Under Development) is company-wide, not
-      // park-scoped, and normally kept warm by its own dedicated daily
-      // cron, scheduled to run before any individual park's own cron. This
-      // checks whether it's genuinely missing right now — not routinely on
-      // every load, only as a real fallback (e.g. first deployment, or the
-      // cron failed that day) — by looking at the actual data that just
-      // loaded, rather than trusting a fragile per-park signal that would
-      // need threading through every cache path.
-      if (!cancelled && Object.keys(parks).length > 0) {
-        const hasAnyGenericAccountData = Object.values(fullData).some(d =>
-          (d.transactions || []).some(t => t.source === 'generic_account_supplemental')
-        );
-        if (!hasAnyGenericAccountData) {
-          try {
-            await fetch('/api/npdGenericAccountsRefresh');
-            // Re-fetch every already-successful park once more — now that
-            // Channel 3 is cached, this reads from cache only, so it
-            // should be fast, not a repeat of the full live computation.
-            for (const park of Object.keys(parks)) {
-              if (cancelled) return;
-              try {
-                const d = await fetchOnePark(park);
-                parks[park] = extractSummaryFields(d);
-                fullData[park] = d;
-              } catch { /* keep the pre-refresh data for this park if the re-fetch fails */ }
-            }
-          } catch { /* Channel 3 refresh failed — proceed with what already loaded rather than fail the whole dashboard */ }
         }
       }
 
@@ -487,7 +482,12 @@ export default function NPD() {
       )}
       {summaryLoading && (
         <div className="npd-loading">
-          <span className="npd-spinner" /> Loading summary — {parksLoaded}/{PARK_LIST.length} parks done (one at a time, so one park's issue can never affect another's)…
+          <span className="npd-spinner" />
+          {loadingStage?.type === 'generic_account'
+            ? ` Loading Summary — '${loadingStage.name}' generic account…`
+            : loadingStage?.type === 'park'
+              ? ` Loading Summary — ${loadingStage.name} (${parksLoaded}/${PARK_LIST.length} parks done, one at a time, so one park's issue can never affect another's)…`
+              : ' Loading Summary…'}
         </div>
       )}
       {summaryError && <div className="error-banner">⚠ {summaryError}</div>}

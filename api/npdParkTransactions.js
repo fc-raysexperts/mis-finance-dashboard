@@ -277,19 +277,23 @@ export default async function handler(req, res) {
     });
     allTxns = allTxns.concat(billResults.flat());
 
-    // Channel 3 — read-only here. Computing it is now the dedicated job of
-    // api/npdGenericAccountsRefresh.js, run as its own explicit step after
-    // all parks' Channel 1/2 data has loaded — never triggered by an
-    // individual park's own request, since that data is company-wide, not
-    // park-scoped, and would make whichever park loaded first unpredictably
-    // slow. If it isn't cached yet, this park simply proceeds without its
-    // Channel 3 share for now — it will appear once the dedicated refresh
-    // runs and this park's data is re-fetched.
-    let genericAccountResults = null;
+    // Channel 3 — read-only here. Computing it is the dedicated job of
+    // api/npdGenericAccountsRefresh.js, called once per account (CWIP,
+    // then IAUD) as an explicit first step, before any park is ever
+    // requested — never triggered by an individual park's own load,
+    // since this data is company-wide, not park-scoped. Both sub-keys are
+    // combined here; if either is genuinely missing (e.g. the daily cron
+    // hasn't run yet today), this park simply proceeds without that
+    // portion rather than failing outright.
+    let genericAccountResults = [];
     if (cacheRedis) {
-      try { genericAccountResults = await cacheRedis.get('npd:cache:generic_accounts_txns:Total Till Date'); } catch { /* proceed without it */ }
+      try {
+        const cwip = await cacheRedis.get('npd:cache:generic_accounts_txns:CWIP');
+        const iaud = await cacheRedis.get('npd:cache:generic_accounts_txns:IAUD');
+        genericAccountResults = [...(cwip || []), ...(iaud || [])];
+      } catch { /* proceed without it */ }
     }
-    const thisParkGenericTxns = (genericAccountResults || [])
+    const thisParkGenericTxns = genericAccountResults
       .filter(t => !t.skipped_duplicate && t.park === park);
     allTxns = allTxns.concat(thisParkGenericTxns);
 
