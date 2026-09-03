@@ -232,7 +232,13 @@ export default async function handler(req, res) {
       // (confirmed real example: Bill #365, bill date 13/03/2026, but
       // txn_value_date 28/04/2026 — a different month). Falls back to the
       // plain date only if txn_value_date is ever missing.
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
+      // Confirmed by direct verification (a real bill genuinely has two
+      // separate records sharing the same bill_number — one paid, one
+      // rejected): a rejected bill never appears in the accounttransaction
+      // report at all, so Channels 1 and 3 are already naturally safe.
+      // This bills-list endpoint has no such filtering built in, though —
+      // it returns a rejected bill exactly the same as any real one.
+      const newOnes = bills.filter(b => b.status !== 'rejected' && !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }

@@ -90,7 +90,9 @@ export default async function handler(req, res) {
       // FIXED — filter by Transaction Posting Date, not plain bill date.
       // See npdParkTransactions.js for the full explanation and confirmed
       // real example.
-      const newOnes = bills.filter(b => !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
+      // Rejected bills never appear in the accounttransaction report — see
+      // npdParkTransactions.js for the full explanation and verification.
+      const newOnes = bills.filter(b => b.status !== 'rejected' && !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
     const uniqueBillsById = new Map();
