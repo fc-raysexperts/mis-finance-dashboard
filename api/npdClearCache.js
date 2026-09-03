@@ -42,6 +42,11 @@ export default async function handler(req, res) {
       keysToDelete.push(`npd:cache:park_lastknown:${park}:${label}`);
     }
   }
+  // Channel 3 (generic account transactions) — a single, company-wide key,
+  // not park-scoped, so it doesn't belong inside the per-park loop above.
+  // Added when Channel 3 was built; without this, clearing the cache would
+  // never actually touch this data at all.
+  keysToDelete.push('npd:cache:generic_accounts_txns:Total Till Date');
 
   // Deletes are independent, lightweight, order-doesn't-matter operations —
   // running them one at a time was the real cause of the timeout once this
