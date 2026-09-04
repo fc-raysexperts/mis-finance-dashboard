@@ -1,6 +1,6 @@
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS,
-  classify, classifyFlatAccount, matchParkProjects,
+  classify, classifyFlatAccount, matchParkProjects, computeTransactionAmount,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
   processBatched, getZohoAuth,
@@ -71,13 +71,19 @@ export default async function handler(req, res) {
     const accountResults = await processBatched(parkAccounts, 3, 1600, async (acct) => {
       const txns = await fetchAccountTransactions(H, ORG, acct.account_id, fromDate, toDate);
       const cls = classify(acct.account_name, park, customClassifications);
-      return txns.map(t => ({
-        date: t.date, vendor: t.transaction_details, transaction_type: t.transaction_type,
-        bill_number: t.entity_number, branch: t.branch?.location_name || null,
-        project_name: null, account_name: acct.account_name,
-        category: cls.category, head_grouping: cls.head_grouping,
-        source: 'chart_of_accounts', amount: parseFloat(t.debit) || 0,
-      }));
+      return txns
+        .map(t => {
+          const amount = computeTransactionAmount(t.debit, t.credit, t.transaction_type);
+          if (amount === null) return null; // credit-only journal — skip entirely
+          return {
+            date: t.date, vendor: t.transaction_details, transaction_type: t.transaction_type,
+            bill_number: t.entity_number, branch: t.branch?.location_name || null,
+            project_name: null, account_name: acct.account_name,
+            category: cls.category, head_grouping: cls.head_grouping,
+            source: 'chart_of_accounts', amount,
+          };
+        })
+        .filter(t => t !== null);
     });
     allTxns = accountResults.flat();
     const coaBillNumbers = new Set(allTxns.map(t => t.bill_number).filter(Boolean));

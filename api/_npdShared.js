@@ -115,6 +115,37 @@ export function classifyFlatAccount(flatAccountName, customClassifications = {})
 
 export const VALID_COMPONENT_SUFFIXES = new Set(['bw', 'land', 'mcr', 'pss', 'tl']);
 
+// The universal amount rule for every transaction, everywhere. Returns
+// null when a transaction should be skipped entirely (not shown, not
+// counted) — callers must filter these out.
+//
+// For every non-journal type (bill, Transfer Order, Vendor Credit,
+// Invoice, Assemblies, Credit Note, Inventory Adjustment, etc.): the real
+// value is debit minus credit — a Transfer Order "in" and its matching
+// "out" now genuinely cancel out instead of only the debit side ever
+// being counted.
+//
+// Journals are a deliberate, explicit exception to that same formula —
+// never net, never using credit at all:
+//   - If a journal only has a credit value (no debit), it's skipped
+//     entirely — these are typically capitalisation/reclassification
+//     entries, not new spend, and mixing in the credit side would
+//     silently zero out real park totals.
+//   - If a journal has a genuine debit value, that debit is used as-is
+//     (not netted against credit) — still shown, still counted, exactly
+//     as an ordinary transaction would be.
+// This function does not decide whether a journal should be considered
+// at all — Channel 3 (CWIP/IAUD direct scan) ignores every journal before
+// this is ever called, regardless of what it would return here.
+export function computeTransactionAmount(debit, credit, transactionType) {
+  const d = parseFloat(debit) || 0;
+  const c = parseFloat(credit) || 0;
+  if ((transactionType || '').toLowerCase() === 'journal') {
+    return d > 0 ? d : null;
+  }
+  return d - c;
+}
+
 export function matchParkProjects(projects, keywords) {
   return projects.filter(p => {
     const customerName = (p.customer_name || '').toLowerCase();
@@ -538,27 +569,35 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
       if (item) results.push(item);
     }
 
-    // Inventory Adjustment By Quantity — a genuinely different transaction
-    // shape from a bill, with no customer_name/project_name at all.
-    const inventoryAdjustments = allTxns.filter(t => t.transaction_type === 'inventory_adjustment_by_quantity');
-    for (const t of inventoryAdjustments) {
+    // Any transaction type other than bill or journal — Transfer Order,
+    // Vendor Credit, Invoice, Assemblies, Credit Note, Inventory
+    // Adjustment, and anything else Zoho might post here. None of these
+    // carry customer_name/project_name the way a bill's line items do, so
+    // branch/location is the only structured signal available, same
+    // approach originally built just for inventory adjustments, now
+    // applied to this whole category of transaction.
+    const otherTxns = allTxns.filter(t => t.transaction_type !== 'bill' && t.transaction_type !== 'journal');
+    const genericCls = classifyFlatAccount(accountName, {});
+    for (const t of otherTxns) {
+      const amount = computeTransactionAmount(t.debit, t.credit, t.transaction_type);
+      if (amount === null) continue; // journals are already excluded above, but stay defensive
       const branchLocation = t.branch?.location_name || '';
       const parkFromBranch = matchParkFromText(branchLocation, PARK_KEYWORDS);
       const park = parkFromBranch || MANUALLY_MAPPED_INVENTORY_ADJUSTMENTS[t.reference_number] || null;
 
       results.push({
         date: t.date,
-        vendor: t.transaction_details || 'Inventory Adjustment',
-        transaction_type: 'inventory_adjustment_by_quantity',
+        vendor: t.transaction_details || t.transaction_type,
+        transaction_type: t.transaction_type,
         bill_number: t.reference_number || null,
         branch: branchLocation || null,
         project_name: null,
         account_name: accountName,
-        category: 'Purchase',
+        category: genericCls.category,
         head_grouping: headGrouping,
         source: 'generic_account_supplemental',
         park: park || 'Unclassified',
-        amount: parseFloat(t.debit) || 0,
+        amount,
       });
     }
   }
