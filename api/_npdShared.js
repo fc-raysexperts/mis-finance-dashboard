@@ -501,6 +501,22 @@ function matchParkFromText(text, keywordsMap) {
   return null;
 }
 
+// Returns every park whose keywords appear in the text, not just the
+// first — lets tier 4 tell a genuinely ambiguous mention (two or more
+// parks named in the same item) apart from a clean, single match. Only
+// ever matches against the 15 real, tracked parks in keywordsMap — a
+// defunct location (Gajner, Bikaner) or another subsidiary's park (Sayla,
+// Siwani) can never be "found" here in the first place, since neither is
+// a key in that map.
+function matchAllParksFromText(text, keywordsMap) {
+  const lower = (text || '').toLowerCase();
+  const matches = [];
+  for (const [park, keywords] of Object.entries(keywordsMap)) {
+    if (keywords.some(kw => lower.includes(kw))) matches.push(park);
+  }
+  return matches;
+}
+
 export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allProjects, fromDate, toDate, singleAccountName = null) {
   const results = [];
   const accountsToProcess = singleAccountName ? [singleAccountName] : GENERIC_ACCOUNTS;
@@ -523,50 +539,108 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
 
     const attributed = await processBatched(billTxns, 3, 1800, async (t) => {
       const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${t.transaction_id}?${ORG}`, H);
-      const lineItems = dd.bill?.line_items || [];
-      const relevantLine = lineItems.find(li => li.account_name === accountName) || lineItems[0];
-      if (!relevantLine) return null;
+      const bill = dd.bill;
+      if (!bill) return [];
+      const allLineItems = bill.line_items || [];
+      // Every item actually posted to the generic account being scanned —
+      // a bill can have several, potentially belonging to different
+      // parks, so each is resolved on its own rather than picking just one
+      // line item to represent the whole bill.
+      const relevantItems = allLineItems.filter(li => li.account_name === accountName);
+      if (relevantItems.length === 0) return [];
 
-      const customerName = relevantLine.customer_name || '';
-      const projectName = relevantLine.project_name || '';
-      const projectId = relevantLine.project_id || '';
+      // Tier 1 & 2 — per item: customer_name, then project_name.
+      const resolved = relevantItems.map(li => {
+        const park = matchParkFromText(li.customer_name, PARK_KEYWORDS) || matchParkFromText(li.project_name, PARK_KEYWORDS);
+        return { li, park: park || null, tier: park ? 'customer_or_project_name' : null };
+      });
 
-      // Try customer_name first, fall back to project_name if that gives
-      // nothing usable. Neither ever matches Gajner/Bikaner.
-      const park = matchParkFromText(customerName, PARK_KEYWORDS) || matchParkFromText(projectName, PARK_KEYWORDS);
-
-      if (park) {
-        // Regardless of WHICH signal found this park, check whether this
-        // exact project_id is already one of THAT park's own, formally-
-        // verified NPD projects — if so, Channel 2 already has this bill,
-        // skip it here to avoid double-counting. Presence of a project_id
-        // alone is not enough — it must belong to the matched park.
-        const parkProjects = matchParkProjects(allProjects, PARK_KEYWORDS[park]);
-        const parkProjectIds = new Set(parkProjects.map(p => p.project_id));
-        if (projectId && parkProjectIds.has(projectId)) {
-          return { skipped_duplicate: true, bill_number: dd.bill.bill_number, park };
+      // Tier 3 — the WHOLE BILL's own Custom Field "Project Name",
+      // applied to every item tiers 1-2 couldn't resolve. Custom fields
+      // on full bill detail live in a nested array, searched by api_name
+      // — confirmed this differs from the flattened cf_* fields seen on
+      // the bill LIST response.
+      if (resolved.some(r => !r.park)) {
+        const cfProjectField = (bill.custom_fields || []).find(cf => cf.api_name === 'cf_project_name');
+        const cfProjectValue = cfProjectField?.value || cfProjectField?.value_formatted || '';
+        const billLevelPark = matchParkFromText(cfProjectValue, PARK_KEYWORDS);
+        if (billLevelPark) {
+          for (const r of resolved) {
+            if (!r.park) { r.park = billLevelPark; r.tier = 'bill_custom_field_project_name'; }
+          }
         }
       }
 
-      const cls = classifyFlatAccount(relevantLine.account_name, {});
-      return {
-        date: dd.bill.txn_value_date || dd.bill.date,
-        vendor: dd.bill.vendor_name || '',
-        transaction_type: 'bill',
-        bill_number: dd.bill.bill_number,
-        branch: null,
-        project_name: projectName || null,
-        account_name: accountName,
-        category: cls.category,
-        head_grouping: headGrouping,
-        source: 'generic_account_supplemental',
-        park: park || 'Unclassified',
-        amount: parseFloat(relevantLine.item_total) || 0,
-      };
+      // Tier 4 — per item, name then description, two passes. Pass A
+      // resolves any item with EXACTLY ONE park mentioned. Pass B then
+      // revisits genuinely ambiguous items (two or more parks mentioned)
+      // using the now-known park of this bill's OTHER, already-resolved
+      // items as the tie-break — never guessing outright.
+      const ambiguous = [];
+      for (const r of resolved) {
+        if (r.park) continue;
+        const nameMatches = matchAllParksFromText(r.li.name, PARK_KEYWORDS);
+        const candidates = nameMatches.length > 0 ? nameMatches : matchAllParksFromText(r.li.description, PARK_KEYWORDS);
+        if (candidates.length === 1) {
+          r.park = candidates[0];
+          r.tier = 'item_name_or_description';
+        } else if (candidates.length > 1) {
+          ambiguous.push({ r, candidates });
+        }
+      }
+      for (const { r, candidates } of ambiguous) {
+        const siblingParks = resolved.filter(x => x !== r && x.park).map(x => x.park);
+        const tieBreak = candidates.find(c => siblingParks.includes(c));
+        if (tieBreak) { r.park = tieBreak; r.tier = 'item_ambiguous_resolved_via_siblings'; }
+      }
+
+      // Tier 5 — the bill's own Notes field, last resort, same
+      // applies-to-everything-still-unresolved approach as tier 3.
+      if (resolved.some(r => !r.park)) {
+        const notesPark = matchParkFromText(bill.notes, PARK_KEYWORDS);
+        if (notesPark) {
+          for (const r of resolved) {
+            if (!r.park) { r.park = notesPark; r.tier = 'bill_notes'; }
+          }
+        }
+      }
+
+      const cls = classifyFlatAccount(accountName, {});
+      const out = [];
+      for (const { li, park } of resolved) {
+        if (park) {
+          // Same duplication check as before, now per item — a project_id
+          // genuinely belonging to the matched park's own NPD projects
+          // means Channel 2 already has this specific item.
+          const parkProjects = matchParkProjects(allProjects, PARK_KEYWORDS[park]);
+          const parkProjectIds = new Set(parkProjects.map(p => p.project_id));
+          if (li.project_id && parkProjectIds.has(li.project_id)) {
+            out.push({ skipped_duplicate: true, bill_number: bill.bill_number, park });
+            continue;
+          }
+        }
+        out.push({
+          date: bill.txn_value_date || bill.date,
+          vendor: bill.vendor_name || '',
+          transaction_type: 'bill',
+          bill_number: bill.bill_number,
+          branch: null,
+          project_name: li.project_name || null,
+          account_name: accountName,
+          category: cls.category,
+          head_grouping: headGrouping,
+          source: 'generic_account_supplemental',
+          park: park || 'Unclassified',
+          amount: parseFloat(li.item_total) || 0,
+        });
+      }
+      return out;
     });
 
-    for (const item of attributed) {
-      if (item) results.push(item);
+    for (const itemResults of attributed) {
+      for (const item of itemResults) {
+        if (item) results.push(item);
+      }
     }
 
     // Any transaction type other than bill or journal — Transfer Order,

@@ -206,6 +206,7 @@ export default async function handler(req, res) {
             vendor: t.transaction_details,
             transaction_type: t.transaction_type,
             bill_number: t.entity_number,
+            bill_id: t.transaction_id || null,
             branch: t.branch?.location_name || null,
             project_name: null,
             account_name: acct.account_name,
@@ -218,7 +219,14 @@ export default async function handler(req, res) {
         .filter(t => t !== null);
     });
     let allTxns = accountResults.flat();
-    const coaBillNumbers = new Set(allTxns.map(t => t.bill_number).filter(Boolean));
+    // FIXED — genuinely different bills can share the exact same
+    // bill_number (confirmed with real data: two unrelated bills both
+    // numbered "Dechu/NPD/02"). Deduping on bill_number caused Channel 2
+    // to silently skip a real, correctly-tagged bill because its NUMBER
+    // collided with an unrelated bill Channel 1 had already found —
+    // nothing to do with the actual bill itself. bill_id is Zoho's own,
+    // genuinely unique identifier per record and cannot collide this way.
+    const coaBillIds = new Set(allTxns.map(t => t.bill_id).filter(Boolean));
 
     const projectsResult = await fetchAllProjects(H, ORG);
     const projects = projectsResult.data;
@@ -244,7 +252,7 @@ export default async function handler(req, res) {
       // report at all, so Channels 1 and 3 are already naturally safe.
       // This bills-list endpoint has no such filtering built in, though —
       // it returns a rejected bill exactly the same as any real one.
-      const newOnes = bills.filter(b => b.status !== 'rejected' && !coaBillNumbers.has(b.bill_number) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
+      const newOnes = bills.filter(b => b.status !== 'rejected' && !coaBillIds.has(b.bill_id) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
