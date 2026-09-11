@@ -46,7 +46,21 @@ export const MANUALLY_EXCLUDED_BILLS = new Set([
   'HTCPL/25-26/013',   // Hindustan Traffo Control — same reclassification
   'TI/2025-26/520',    // Aumni Transmission Industry — same reclassification (7 line items)
   'RTPC/001/25-26',    // RK Tech Power Corporation (Panchu) — reclassified via Inventory Adjustment (ref 6448), now counted through Channel 3 instead
+  'AE/06/1052',        // Amar Electricals(RJ) (Pugal) — reclassified via Inventory Adjustment (ref 6405), now counted through Channel 3 instead
 ]);
+
+// Bills whose ACCOUNT was tagged to the wrong park by mistake (e.g. a
+// Lunkaransar-named account used for genuinely Panchu spend), but whose
+// NPD Project tag is correct. Channel 1 would otherwise show these under
+// the wrong park; Channel 2 already shows them correctly. This removes
+// each bill from only the ONE specific park named here — not globally,
+// unlike MANUALLY_EXCLUDED_BILLS above — so it keeps appearing correctly
+// wherever its Project tag already points. Once the account tagging is
+// corrected on Zoho's side, these entries should be removed.
+export const MANUALLY_EXCLUDED_FROM_PARK = {
+  '13': 'Lunkaransar',              // S.M.S Construction — account named for Lunkaransar, genuinely Panchu (NPD - Panchu - MCR)
+  '260611028208': 'Panchu',         // SAFEXPRESS PRIVATE LTD — account named for Panchu, genuinely Lunkaransar (NPD - Lunkaransar - PSS)
+};
 
 export const WATCHED_FALLBACK_ONLY_PARKS = new Set(['Thukariyasar', 'Baithwasiya', 'Jasarasar', 'Sheruna']);
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -137,11 +151,19 @@ export const VALID_COMPONENT_SUFFIXES = new Set(['bw', 'land', 'mcr', 'pss', 'tl
 // This function does not decide whether a journal should be considered
 // at all — Channel 3 (CWIP/IAUD direct scan) ignores every journal before
 // this is ever called, regardless of what it would return here.
-export function computeTransactionAmount(debit, credit, transactionType) {
+export function computeTransactionAmount(debit, credit, transactionType, entityNumber = '') {
   const d = parseFloat(debit) || 0;
   const c = parseFloat(credit) || 0;
   if ((transactionType || '').toLowerCase() === 'journal') {
-    return d > 0 ? d : null;
+    if (d > 0) return d;
+    // Credit-only journal. Only the "Clean" entries — the year-end
+    // ledger-transfer entries that moved every NPD account's balance
+    // into CWIP/IAUD — are unconditionally ignored, since counting them
+    // here would double-count money already captured elsewhere. Any
+    // other credit-only journal (e.g. "SJ-307", a genuine correction or
+    // adjustment) is real and should count, as a negative value.
+    if ((entityNumber || '').toLowerCase().includes('clean')) return null;
+    return c > 0 ? -c : null;
   }
   return d - c;
 }
@@ -477,8 +499,7 @@ export async function getZohoAuth() {
 // reclassifications, not new spend) — only bill-type transactions are
 // considered. Gajner/Bikaner is explicitly excluded — that location has
 // been discarded, not just unmatched.
-export const GENERIC_ACCOUNTS = ['Capital Work in Progress', 'Intangible Asset Under Development'];
-const EXCLUDED_LOCATIONS = ['gajner', 'bikaner'];
+export const GENERIC_ACCOUNTS = ['Capital Work in Progress', 'Intangible Asset Under Development', 'land lease registration NEW NPD'];
 
 // Inventory Adjustment By Quantity entries have no customer_name or
 // project_name at all (a completely different shape from a bill) — the
@@ -494,7 +515,14 @@ const MANUALLY_MAPPED_INVENTORY_ADJUSTMENTS = {
 
 function matchParkFromText(text, keywordsMap) {
   const lower = (text || '').toLowerCase();
-  if (EXCLUDED_LOCATIONS.some(loc => lower.includes(loc))) return null;
+  // No explicit exclusion check needed — Gajner, Bikaner, and other-
+  // subsidiary names (Sayla, Siwani, etc.) simply aren't keys in
+  // keywordsMap, so they can never match here regardless of what else
+  // appears alongside them in the same text. A blanket "blank everything
+  // if an excluded name appears anywhere" check was tried here before,
+  // but it silently defeated tiers 3 and 5 whenever Notes or a Custom
+  // Field genuinely mentioned both an excluded location AND a real park
+  // together — exactly the scenario that needs this tier to still work.
   for (const [park, keywords] of Object.entries(keywordsMap)) {
     if (keywords.some(kw => lower.includes(kw))) return park;
   }
@@ -524,7 +552,7 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
   for (const accountName of accountsToProcess) {
     const acct = allAccounts.find(a => (a.account_name || '').toLowerCase() === accountName.toLowerCase());
     if (!acct) continue;
-    const headGrouping = accountName === 'Capital Work in Progress' ? 'CWIP' : 'IAUD';
+    const headGrouping = accountName === 'Capital Work in Progress' ? 'CWIP' : accountName === 'Intangible Asset Under Development' ? 'IAUD' : 'LLR-NPD';
 
     const rule = encodeURIComponent(JSON.stringify({
       columns: [{ index: 1, field: 'account_id', group: 'report', comparator: 'in', value: [acct.account_id] }],

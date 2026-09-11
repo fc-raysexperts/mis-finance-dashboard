@@ -1,5 +1,5 @@
 import {
-  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS,
+  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS, MANUALLY_EXCLUDED_FROM_PARK,
   classify, classifyFlatAccount, matchParkProjects, computeTransactionAmount,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
@@ -73,8 +73,9 @@ export default async function handler(req, res) {
       const cls = classify(acct.account_name, park, customClassifications);
       return txns
         .map(t => {
-          const amount = computeTransactionAmount(t.debit, t.credit, t.transaction_type);
+          const amount = computeTransactionAmount(t.debit, t.credit, t.transaction_type, t.entity_number);
           if (amount === null) return null; // credit-only journal — skip entirely
+          if (MANUALLY_EXCLUDED_FROM_PARK[t.entity_number] === park) return null; // account mistagged to this park — belongs elsewhere via NPD Project
           return {
             date: t.date, vendor: t.transaction_details, transaction_type: t.transaction_type,
             bill_number: t.entity_number, bill_id: t.transaction_id || null, branch: t.branch?.location_name || null,
@@ -101,7 +102,7 @@ export default async function handler(req, res) {
       // real example.
       // Rejected bills never appear in the accounttransaction report — see
       // npdParkTransactions.js for the full explanation and verification.
-      const newOnes = bills.filter(b => b.status !== 'rejected' && !coaBillIds.has(b.bill_id) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
+      const newOnes = bills.filter(b => b.status !== 'rejected' && b.status !== 'void' && !coaBillIds.has(b.bill_id) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= fromDate && ((b.txn_value_date || b.date) || '') <= toDate);
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
     const uniqueBillsById = new Map();
@@ -126,14 +127,15 @@ export default async function handler(req, res) {
 
     // Channel 3 — read-only here, same reasoning as npdParkTransactions.js.
     // Computing it is the dedicated job of npdGenericAccountsRefresh.js,
-    // called once per account (CWIP, then IAUD), scheduled to run before
-    // the first park's own cron each day.
+    // called once per account (CWIP, IAUD, then land lease registration
+    // NEW NPD), scheduled to run before the first park's own cron each day.
     let genericAccountResults = [];
     if (redis) {
       try {
         const cwip = await redis.get('npd:cache:generic_accounts_txns:CWIP');
         const iaud = await redis.get('npd:cache:generic_accounts_txns:IAUD');
-        genericAccountResults = [...(cwip || []), ...(iaud || [])];
+        const llr = await redis.get('npd:cache:generic_accounts_txns:LLR');
+        genericAccountResults = [...(cwip || []), ...(iaud || []), ...(llr || [])];
       } catch { /* proceed without it */ }
     }
     const thisParkGenericTxns = genericAccountResults

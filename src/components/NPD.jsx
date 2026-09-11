@@ -222,15 +222,16 @@ export default function NPD() {
         return d;
       }
 
-      // Channel 3, first — CWIP, then IAUD, exactly in that order. Always
-      // called, every load, but each call is self-checking on the backend:
-      // if that account is already cached for today (the normal case,
-      // once the daily cron has run before any park's own cron), it
-      // returns almost immediately. Only genuinely slow when that
-      // account's cache is actually missing. Guaranteeing this completes
-      // BEFORE any park is requested means every park's own computation
-      // always finds Channel 3 ready on its very first pass — no separate
-      // "detect missing, refresh, reload everything" fallback needed.
+      // Channel 3, first — CWIP, then IAUD, then land lease registration
+      // NEW NPD, exactly in that order. Always called, every load, but
+      // each call is self-checking on the backend: if that account is
+      // already cached for today (the normal case, once the daily cron
+      // has run before any park's own cron), it returns almost
+      // immediately. Only genuinely slow when that account's cache is
+      // actually missing. Guaranteeing this completes BEFORE any park is
+      // requested means every park's own computation always finds
+      // Channel 3 ready on its very first pass — no separate "detect
+      // missing, refresh, reload everything" fallback needed.
       if (!cancelled) {
         setLoadingStage({ type: 'generic_account', name: 'Capital Work in Progress' });
         try { await fetch('/api/npdGenericAccountsRefresh?account=cwip'); } catch { /* proceed regardless — parks will simply be missing this portion if it never resolves */ }
@@ -238,6 +239,10 @@ export default function NPD() {
       if (!cancelled) {
         setLoadingStage({ type: 'generic_account', name: 'Intangible Asset Under Development' });
         try { await fetch('/api/npdGenericAccountsRefresh?account=iaud'); } catch { /* proceed regardless */ }
+      }
+      if (!cancelled) {
+        setLoadingStage({ type: 'generic_account', name: 'land lease registration NEW NPD' });
+        try { await fetch('/api/npdGenericAccountsRefresh?account=llr'); } catch { /* proceed regardless */ }
       }
 
       // Staged retry: finish a full first pass through every park before

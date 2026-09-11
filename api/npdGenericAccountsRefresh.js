@@ -16,7 +16,7 @@ import {
 // always call this first, every time, and it naturally resolves fast or
 // slow depending on whether real work is needed, with no separate
 // "check" vs "refresh" logic required on either side.
-const ACCOUNT_KEY_MAP = { cwip: 'Capital Work in Progress', iaud: 'Intangible Asset Under Development' };
+const ACCOUNT_KEY_MAP = { cwip: 'Capital Work in Progress', iaud: 'Intangible Asset Under Development', llr: 'land lease registration NEW NPD' };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     const accountParam = (req.query.account || '').toLowerCase();
     const accountName = ACCOUNT_KEY_MAP[accountParam];
     if (!accountName) {
-      return res.status(400).json({ error: 'Missing or invalid ?account= — expected "cwip" or "iaud"' });
+      return res.status(400).json({ error: 'Missing or invalid ?account= — expected "cwip", "iaud", or "llr"' });
     }
     const cacheSubKey = `npd:cache:generic_accounts_txns:${accountParam.toUpperCase()}`;
 

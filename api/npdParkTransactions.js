@@ -1,6 +1,6 @@
 import { getAccessToken } from './_tokenCache.js';
 import {
-  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS, sleep,
+  PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS, MANUALLY_EXCLUDED_FROM_PARK, sleep,
   classify, classifyFlatAccount, matchParkProjects, computeTransactionAmount,
   getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
@@ -199,8 +199,9 @@ export default async function handler(req, res) {
       const cls = classify(acct.account_name, park, customClassifications);
       return txns
         .map(t => {
-          const amount = computeTransactionAmount(t.debit, t.credit, t.transaction_type);
+          const amount = computeTransactionAmount(t.debit, t.credit, t.transaction_type, t.entity_number);
           if (amount === null) return null; // credit-only journal — skip entirely
+          if (MANUALLY_EXCLUDED_FROM_PARK[t.entity_number] === park) return null; // account mistagged to this park — belongs elsewhere via NPD Project
           return {
             date: t.date,
             vendor: t.transaction_details,
@@ -252,7 +253,7 @@ export default async function handler(req, res) {
       // report at all, so Channels 1 and 3 are already naturally safe.
       // This bills-list endpoint has no such filtering built in, though —
       // it returns a rejected bill exactly the same as any real one.
-      const newOnes = bills.filter(b => b.status !== 'rejected' && !coaBillIds.has(b.bill_id) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
+      const newOnes = bills.filter(b => b.status !== 'rejected' && b.status !== 'void' && !coaBillIds.has(b.bill_id) && !MANUALLY_EXCLUDED_BILLS.has((b.bill_number || '').trim()) && ((b.txn_value_date || b.date) || '') >= liveFromDate && ((b.txn_value_date || b.date) || '') <= liveToDate);
       newFromProjectBills += newOnes.length;
       allNewBills = allNewBills.concat(newOnes.map(b => ({ bill: b, projectName: proj.project_name })));
     }
@@ -299,18 +300,20 @@ export default async function handler(req, res) {
 
     // Channel 3 — read-only here. Computing it is the dedicated job of
     // api/npdGenericAccountsRefresh.js, called once per account (CWIP,
-    // then IAUD) as an explicit first step, before any park is ever
-    // requested — never triggered by an individual park's own load,
-    // since this data is company-wide, not park-scoped. Both sub-keys are
-    // combined here; if either is genuinely missing (e.g. the daily cron
-    // hasn't run yet today), this park simply proceeds without that
-    // portion rather than failing outright.
+    // IAUD, then land lease registration NEW NPD) as an explicit first
+    // step, before any park is ever requested — never triggered by an
+    // individual park's own load, since this data is company-wide, not
+    // park-scoped. All three sub-keys are combined here; if any is
+    // genuinely missing (e.g. the daily cron hasn't run yet today), this
+    // park simply proceeds without that portion rather than failing
+    // outright.
     let genericAccountResults = [];
     if (cacheRedis) {
       try {
         const cwip = await cacheRedis.get('npd:cache:generic_accounts_txns:CWIP');
         const iaud = await cacheRedis.get('npd:cache:generic_accounts_txns:IAUD');
-        genericAccountResults = [...(cwip || []), ...(iaud || [])];
+        const llr = await cacheRedis.get('npd:cache:generic_accounts_txns:LLR');
+        genericAccountResults = [...(cwip || []), ...(iaud || []), ...(llr || [])];
       } catch { /* proceed without it */ }
     }
     const thisParkGenericTxns = genericAccountResults
