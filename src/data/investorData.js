@@ -17,23 +17,79 @@ const DEFAULTS = {
     outstanding: 19.65,       // Cr
     outstandingPct: 8.2,
   },
-  orderBook: {
-    total: 1022,              // Cr, EPC + Govt BESS combined
-    activeEPC: 711,
-    activeEPCDetail: '19 projects · 259 MWp · 7 parks',
-    govtBESS: 311,
-    govtBESSDetail: 'RVUNL ₹183 Cr + NTPC ₹128 Cr',
-    orderToFY26Rev: '2.5x',
-    orderToFY26RevDetail: 'Order Book / FY26 Revenue',
-  },
-  scheduledRevenue: [
-    { client: 'Wonder Cement Ph.2', park: 'Dechu',       capacity: '39.6 MWp', cr: 113.76, quarter: 'Q2 FY27' },
-    { client: 'BKT Industries',     park: 'Dechu',       capacity: '16.0 MWp', cr: 49.90,  quarter: 'Q2 FY27' },
-    { client: 'Lords Chloro Ph.2',  park: 'Lunkaransar', capacity: '21.0 MWp', cr: 29.40,  quarter: 'Q2 FY27' },
-    { client: 'JECRC',              park: 'Dechu',       capacity: '7.35 MWp', cr: 21.98,  quarter: 'Q2 FY27' },
-    { client: 'Raksha Bars',        park: 'Dechu',       capacity: '7.35 MWp', cr: 21.39,  quarter: 'Q2 FY27' },
-    { client: 'Wonder Cement Ph.3', park: 'SS Nagar',    capacity: '75.0 MWp', cr: 210.75, quarter: 'Q3 FY27' },
-    { client: 'JSW Energy',         park: 'Pugal',       capacity: '72.5 MWp', cr: 203.73, quarter: 'Q3 FY27' },
+  // top-level orderBook removed — Live Order Book KPIs are now computed live
+  // from epcRevenueRecognition (see Outlook.jsx), not stored/edited here.
+  // (inv.ukArin.orderBook below is unrelated — UK Arin Power tab, untouched.)
+  // EPC Revenue Recognition — Order Book (Sept 2026, final per signed LOAs) is the
+  // source of truth for client/park/cost; sort = old Order Book's row order for
+  // carried-over clients, then Sept file's own order for newly-added clients.
+  // Commissioning dates come from a separate tracker and are blank until a project
+  // actually commissions and drops off this list.
+  // EPC Revenue Recognition — Order Book (Sept 2026, final per signed LOAs) is the
+  // source of truth for client/park/cost; sort = old Order Book's row order for
+  // carried-over clients, then Sept file's own order for newly-added clients.
+  // null = genuinely no value in the source (not a real 0) — rendered blank, not '0.00'.
+  // Commissioning Date is blank for all 27: re-checked the ground-mount tracker (every
+  // column, all 3 sheets) and none of these currently-pending clients have one there yet —
+  // its dated rows are exactly the clients that already dropped off this Order Book.
+  // EPC Revenue Recognition — the FULL FY27 project log, not just the currently-
+  // pending Order Book: every client from the Sept 2026 Order Book (final data for
+  // anything in it) PLUS every FY27 client from the old Order Book file that has since
+  // been commissioned and dropped off Sept's list (old file's own data, since Sept
+  // doesn't carry them). Sort = old file's chronological (Date of Agreement) order for
+  // every client that appears there, then Sept's own order for Sept-only new signings.
+  // null = genuinely no value in the source (not a real 0) — rendered blank, not '0.00'.
+  // Commissioning Date is filled from the ground-mount ('LE Projects') tracker for the
+  // 11 already-commissioned clients; blank for the 27 still-pending Sept clients, since
+  // that tracker genuinely has no date yet for any of them (re-checked exhaustively).
+  // EPC Revenue Recognition — full FY27 project log (see composition notes below).
+  // RVUNL and NTPC pinned last per request. Rate columns (EPC/Modules/BESS Supply/
+  // Install) removed from the table and from this data — Total Project Cost is kept
+  // as the single cost figure per project. The Total row itself is NOT stored here;
+  // it's computed at render time in Outlook.jsx from whatever rows exist, so it can
+  // never go stale after an edit/add/remove.
+  // null = genuinely no value in the source (not a real 0) — rendered blank, not '0.00'.
+  // Commissioning Date is filled for the 11 already-commissioned clients (from the
+  // ground-mount tracker); blank for the 27 still-pending Sept clients.
+  epcRevenueRecognition: [
+    { client: 'Uttam Strips', park: 'Lunkaransar', dcCapacity: 26.2, bessCapacity: 11.29, totalCost: 87.45, commissioningDate: '07-Jul-2026' },
+    { client: 'ASK', park: 'Kolayat', dcCapacity: 11.55, bessCapacity: 4.07, totalCost: 35.28, commissioningDate: '21-Aug-2026' },
+    { client: 'Mangalam', park: 'Panchu', dcCapacity: 1.72, bessCapacity: null, totalCost: 5.17, commissioningDate: '06-Aug-2026' },
+    { client: 'Saville Hospital and Research Centre', park: 'Panchu', dcCapacity: 2.05, bessCapacity: 0.52, totalCost: 6.64, commissioningDate: '' },
+    { client: 'MEC Bearings', park: 'Panchu', dcCapacity: 1.0, bessCapacity: null, totalCost: 3.0, commissioningDate: '13-Aug-2026' },
+    { client: 'Kothari', park: 'Kolayat', dcCapacity: 0.86, bessCapacity: null, totalCost: 1.36, commissioningDate: '13-Aug-2026' },
+    { client: 'Inox Air', park: 'Dechu', dcCapacity: 12.0, bessCapacity: 11.29, totalCost: 28.16, commissioningDate: '25-Jul-2026' },
+    { client: 'Kamdhenu Limited', park: 'Dechu', dcCapacity: 5.0, bessCapacity: null, totalCost: 14.55, commissioningDate: '02-Jun-2026' },
+    { client: 'Lords Chloro Phase 2', park: 'Lunkaransar', dcCapacity: 21.0, bessCapacity: 1.45, totalCost: 29.4, commissioningDate: '02-Aug-2026' },
+    { client: 'Wonder Cement Phase 2', park: 'Dechu', dcCapacity: 39.6, bessCapacity: 2.93, totalCost: 113.76, commissioningDate: '29-Jul-2026' },
+    { client: 'Soni International Jewelry Pvt. Ltd.', park: 'Lunkaransar', dcCapacity: 1.37, bessCapacity: 0.64, totalCost: 4.65, commissioningDate: '' },
+    { client: 'Raksha Bars', park: 'Dechu', dcCapacity: 7.35, bessCapacity: null, totalCost: 21.39, commissioningDate: '04-Jun-2026' },
+    { client: 'JECRC', park: 'Dechu', dcCapacity: 7.35, bessCapacity: null, totalCost: 21.98, commissioningDate: '' },
+    { client: 'Jagdamba', park: 'Dechu', dcCapacity: 0.81, bessCapacity: null, totalCost: 2.36, commissioningDate: '02-Jul-2026' },
+    { client: 'Alliance Poly sacks', park: 'Dechu', dcCapacity: 3.2, bessCapacity: null, totalCost: 10.21, commissioningDate: '' },
+    { client: 'Siddharth Polysacks', park: 'Dechu', dcCapacity: 1.25, bessCapacity: null, totalCost: 3.99, commissioningDate: '' },
+    { client: 'BKT Industries (Balkrishna Industries Ltd.)', park: 'Dechu', dcCapacity: 16.0, bessCapacity: 3.34, totalCost: 49.9, commissioningDate: '' },
+    { client: 'Shree Ananta Dream Homes Pvt. Ltd.', park: 'Panchu', dcCapacity: 0.3, bessCapacity: null, totalCost: 0.9, commissioningDate: '' },
+    { client: 'Metallic Rolls', park: 'Bhamatsar', dcCapacity: 0.52, bessCapacity: null, totalCost: 1.53, commissioningDate: '' },
+    { client: 'Ravi Surya Spa', park: 'Lunkaransar', dcCapacity: 2.08, bessCapacity: null, totalCost: 6.14, commissioningDate: '' },
+    { client: 'JSW Green Energy Thirteen Ltd.', park: 'Pugal', dcCapacity: 29.0, bessCapacity: null, totalCost: 41.72, commissioningDate: '' },
+    { client: 'JSW Green Energy Fifteen Ltd.', park: 'Pugal', dcCapacity: 43.5, bessCapacity: null, totalCost: 62.57, commissioningDate: '' },
+    { client: 'Wonder Cement Ltd. — Phase 3', park: 'SS Nagar Park', dcCapacity: 75.0, bessCapacity: 5.0, totalCost: 257.88, commissioningDate: '' },
+    { client: 'Miracle Coro Plast Pvt. Ltd.', park: 'Dechu', dcCapacity: 6.0, bessCapacity: 1.67, totalCost: 18.01, commissioningDate: '' },
+    { client: 'Powerforge Engineering Pvt. Ltd.', park: 'Dechu', dcCapacity: 2.5, bessCapacity: null, totalCost: 7.5, commissioningDate: '' },
+    { client: 'GD Foods Manufacturing (India) Pvt. Ltd.', park: 'Dechu', dcCapacity: 1.52, bessCapacity: null, totalCost: 4.56, commissioningDate: '' },
+    { client: 'Rahul Induction Pvt. Ltd.', park: 'Panchu', dcCapacity: 0.7, bessCapacity: null, totalCost: 2.18, commissioningDate: '' },
+    { client: 'Udyog Mandir', park: 'Panchu', dcCapacity: 1.0, bessCapacity: null, totalCost: 3.06, commissioningDate: '' },
+    { client: 'Ganpati Leasing Infrastructure Pvt. Ltd.', park: 'Bhamatsar', dcCapacity: 1.11, bessCapacity: null, totalCost: 3.44, commissioningDate: '' },
+    { client: 'Aram Textiles Pvt. Ltd.', park: 'Bhamatsar', dcCapacity: 4.67, bessCapacity: 2.39, totalCost: 17.35, commissioningDate: '' },
+    { client: 'Ratan Engineering Company Pvt. Ltd.', park: 'Bhamatsar', dcCapacity: 0.8, bessCapacity: null, totalCost: 2.48, commissioningDate: '' },
+    { client: 'Rockwood Hotels & Resorts Ltd.', park: 'Gajner', dcCapacity: 0.75, bessCapacity: null, totalCost: 2.29, commissioningDate: '' },
+    { client: 'Devbir Power Project Private Limited', park: 'Kolayat', dcCapacity: 6.18, bessCapacity: null, totalCost: 16.81, commissioningDate: '' },
+    { client: 'Premier Bars Ltd.', park: 'Bhamatsar', dcCapacity: 4.5, bessCapacity: null, totalCost: 15.75, commissioningDate: '' },
+    { client: 'Wonder Cement Ltd. — Phase 4', park: 'Jasrasar', dcCapacity: 30.0, bessCapacity: 2.09, totalCost: 81.41, commissioningDate: '' },
+    { client: 'Zetwerk Manufacturing Businesses Ltd.', park: 'Kolayat', dcCapacity: 26.0, bessCapacity: 2.0, totalCost: 37.3, commissioningDate: '' },
+    { client: 'RVUNL', park: 'Heerapura', dcCapacity: null, bessCapacity: 150.0, totalCost: 58.0, commissioningDate: '' },
+    { client: 'NTPC', park: 'Surpura', dcCapacity: null, bessCapacity: 100.0, totalCost: 43.0, commissioningDate: '' },
   ],
   guidance: {
     epcTargetLabel: '₹800–1,000 Cr',

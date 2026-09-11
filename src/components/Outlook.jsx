@@ -42,19 +42,31 @@ export default function Outlook({ curFY }) {
   const addRow = () => {
     setInv(prev => {
       const next = structuredClone(prev);
-      next.scheduledRevenue.push({ client: 'New Client', park: '', capacity: '', cr: 0, quarter: 'Q1 FY' + (parseInt(curFY.slice(2))+1) });
+      next.epcRevenueRecognition.push({
+        client: 'New Client', park: '', dcCapacity: 0, bessCapacity: null,
+        totalCost: 0, commissioningDate: '',
+      });
       return next;
     });
   };
   const removeRow = (idx) => {
     setInv(prev => {
       const next = structuredClone(prev);
-      next.scheduledRevenue.splice(idx, 1);
+      next.epcRevenueRecognition.splice(idx, 1);
       return next;
     });
   };
 
   const handleSave = async () => { await saveInvestorData(inv); setEditMode(false); };
+
+  // null = genuinely no value for this project (not a real 0) — shown blank, not "0.00"
+  const fmtNum = (v, unit) => (v === null || v === undefined ? '—' : `${v.toFixed(2)} ${unit}`);
+  const sumField = (field) => inv.epcRevenueRecognition.reduce((s, r) => s + (r[field] || 0), 0);
+  const numInputProps = (row, i, field) => ({
+    className: 'edit-input edit-input-num', type: 'number', step: '0.01',
+    value: row[field] === null || row[field] === undefined ? '' : row[field],
+    onChange: e => updateArrItem(['epcRevenueRecognition'], i, field, e.target.value === '' ? null : Number(e.target.value)),
+  });
 
   return (
     <div className="tab-content">
@@ -157,51 +169,23 @@ export default function Outlook({ curFY }) {
 
       {/* ═══ ORDER BOOK SECTIONS AFTER ═══ */}
 
-      {/* Live Order Book */}
+      {/* Live Order Book — computed live from the EPC Revenue Recognition table
+          below, same as its Total row. Not editable: these are derived sums,
+          not stored data, so they can never drift out of sync with the table. */}
       <div className="chart-card">
         <div className="chart-card-title">Live Order Book</div>
         <div className="kpi-row">
           <div className="kpi-card">
-            {editMode
-              ? <>₹<input className="edit-input edit-input-num" type="number" value={inv.orderBook.total}
-                  onChange={e => update(['orderBook','total'], Number(e.target.value))} /> Cr</>
-              : <div className="kpi-value">₹{inv.orderBook.total} Cr</div>}
+            <div className="kpi-value">₹{sumField('totalCost').toFixed(2)} Cr</div>
             <div className="kpi-label">Total Order Book</div>
-            <div className="kpi-sub">EPC + Govt BESS combined</div>
           </div>
           <div className="kpi-card">
-            {editMode
-              ? <>₹<input className="edit-input edit-input-num" type="number" value={inv.orderBook.activeEPC}
-                  onChange={e => update(['orderBook','activeEPC'], Number(e.target.value))} /> Cr</>
-              : <div className="kpi-value">₹{inv.orderBook.activeEPC} Cr</div>}
-            <div className="kpi-label">Active EPC Orders</div>
-            <div className="kpi-sub">
-              {editMode
-                ? <input className="edit-input edit-input-text" value={inv.orderBook.activeEPCDetail}
-                    onChange={e => update(['orderBook','activeEPCDetail'], e.target.value)} />
-                : inv.orderBook.activeEPCDetail}
-            </div>
+            <div className="kpi-value">{sumField('dcCapacity').toFixed(2)} MWp</div>
+            <div className="kpi-label">Total Solar Capacity</div>
           </div>
           <div className="kpi-card">
-            {editMode
-              ? <>₹<input className="edit-input edit-input-num" type="number" value={inv.orderBook.govtBESS}
-                  onChange={e => update(['orderBook','govtBESS'], Number(e.target.value))} /> Cr</>
-              : <div className="kpi-value">₹{inv.orderBook.govtBESS} Cr</div>}
-            <div className="kpi-label">Govt BESS Tenders</div>
-            <div className="kpi-sub">
-              {editMode
-                ? <input className="edit-input edit-input-text" value={inv.orderBook.govtBESSDetail}
-                    onChange={e => update(['orderBook','govtBESSDetail'], e.target.value)} />
-                : inv.orderBook.govtBESSDetail}
-            </div>
-          </div>
-          <div className="kpi-card">
-            {editMode
-              ? <input className="edit-input edit-input-text" value={inv.orderBook.orderToFY26Rev}
-                  onChange={e => update(['orderBook','orderToFY26Rev'], e.target.value)} />
-              : <div className="kpi-value">{inv.orderBook.orderToFY26Rev}</div>}
-            <div className="kpi-label">Order Book / FY26 Revenue</div>
-            <div className="kpi-sub">Strong revenue visibility</div>
+            <div className="kpi-value">{sumField('bessCapacity').toFixed(2)} MWh</div>
+            <div className="kpi-label">Total BESS Capacity</div>
           </div>
         </div>
       </div>
@@ -215,35 +199,65 @@ export default function Outlook({ curFY }) {
         valueLabel="Revenue (₹ Cr)"
       />
 
-      {/* Scheduled EPC Revenue Recognition */}
+      {/* EPC Revenue Recognition — full FY27 project log (current Order Book +
+          already-commissioned clients). RVUNL/NTPC pinned last; Total row is
+          computed here at render time from whatever rows currently exist, so
+          it can't go stale after an edit/add/remove — it is never stored. */}
       <div className="chart-card">
-        <div className="chart-card-title">Scheduled EPC Revenue Recognition</div>
-        <table className="investor-cmp-table">
-          <thead>
-            <tr><th>Client</th><th>Park</th><th>Capacity</th><th>₹ Cr</th><th>Quarter</th>{editMode && <th></th>}</tr>
-          </thead>
-          <tbody>
-            {inv.scheduledRevenue.map((row, i) => (
-              <tr key={i}>
-                {editMode ? (
-                  <>
-                    <td><input className="edit-input edit-input-text" value={row.client} onChange={e => updateArrItem(['scheduledRevenue'], i, 'client', e.target.value)} /></td>
-                    <td><input className="edit-input edit-input-text" value={row.park} onChange={e => updateArrItem(['scheduledRevenue'], i, 'park', e.target.value)} /></td>
-                    <td><input className="edit-input edit-input-text" value={row.capacity} onChange={e => updateArrItem(['scheduledRevenue'], i, 'capacity', e.target.value)} /></td>
-                    <td><input className="edit-input edit-input-num" type="number" step="0.01" value={row.cr} onChange={e => updateArrItem(['scheduledRevenue'], i, 'cr', Number(e.target.value))} /></td>
-                    <td><input className="edit-input edit-input-text" value={row.quarter} onChange={e => updateArrItem(['scheduledRevenue'], i, 'quarter', e.target.value)} /></td>
-                    <td><button className="row-remove-btn" onClick={() => removeRow(i)}>✕</button></td>
-                  </>
-                ) : (
-                  <>
-                    <td>{row.client}</td><td>{row.park}</td><td>{row.capacity}</td>
-                    <td>{row.cr.toFixed(2)}</td><td>{row.quarter}</td>
-                  </>
-                )}
+        <div className="chart-card-title">EPC Revenue Recognition</div>
+        <div style={{ overflowX: 'auto' }}>
+          {/* tableLayout:'auto' + textTransform:'none' override the app-wide
+              equal-width / all-caps table defaults, scoped to just this table
+              via inline style so no other tab's tables are affected. */}
+          <table className="investor-cmp-table" style={{ tableLayout: 'auto', minWidth: 'auto' }}>
+            <thead>
+              <tr>
+                <th style={{ textTransform: 'none' }}>S No.</th>
+                <th style={{ textTransform: 'none' }}>Client Name</th>
+                <th style={{ textTransform: 'none' }}>Park Location</th>
+                <th style={{ textTransform: 'none' }}>DC Capacity</th>
+                <th style={{ textTransform: 'none' }}>BESS Capacity</th>
+                <th style={{ textTransform: 'none' }}>Total Project Cost</th>
+                <th style={{ textTransform: 'none' }}>Commissioning Date</th>
+                {editMode && <th></th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {inv.epcRevenueRecognition.map((row, i) => (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  {editMode ? (
+                    <>
+                      <td><input className="edit-input edit-input-text" value={row.client} onChange={e => updateArrItem(['epcRevenueRecognition'], i, 'client', e.target.value)} /></td>
+                      <td><input className="edit-input edit-input-text" value={row.park} onChange={e => updateArrItem(['epcRevenueRecognition'], i, 'park', e.target.value)} /></td>
+                      <td><input {...numInputProps(row, i, 'dcCapacity')} /></td>
+                      <td><input {...numInputProps(row, i, 'bessCapacity')} /></td>
+                      <td><input {...numInputProps(row, i, 'totalCost')} /></td>
+                      <td><input className="edit-input edit-input-text" value={row.commissioningDate} onChange={e => updateArrItem(['epcRevenueRecognition'], i, 'commissioningDate', e.target.value)} /></td>
+                      <td><button className="row-remove-btn" onClick={() => removeRow(i)}>✕</button></td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{row.client}</td><td>{row.park}</td>
+                      <td>{fmtNum(row.dcCapacity, 'MWp')}</td><td>{fmtNum(row.bessCapacity, 'MWh')}</td>
+                      <td>{fmtNum(row.totalCost, 'Cr')}</td><td>{row.commissioningDate || '—'}</td>
+                    </>
+                  )}
+                </tr>
+              ))}
+              <tr className="investor-row-strong">
+                <td></td>
+                <td>Total</td>
+                <td></td>
+                <td>{sumField('dcCapacity').toFixed(2)} MWp</td>
+                <td>{sumField('bessCapacity').toFixed(2)} MWh</td>
+                <td>{sumField('totalCost').toFixed(2)} Cr</td>
+                <td></td>
+                {editMode && <td></td>}
+              </tr>
+            </tbody>
+          </table>
+        </div>
         {editMode && <button className="add-row-btn" onClick={addRow}>+ Add Row</button>}
       </div>
     </div>
