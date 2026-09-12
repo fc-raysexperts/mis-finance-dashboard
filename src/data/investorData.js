@@ -65,7 +65,7 @@ const DEFAULTS = {
     { client: 'Mangalam', park: 'Panchu', dcCapacity: 1.72, bessCapacity: null, totalCost: 5.17, commissioningDate: '06-Aug-2026' },
     { client: 'Saville Hospital and Research Centre', park: 'Panchu', dcCapacity: 2.05, bessCapacity: 0.52, totalCost: 6.64, commissioningDate: '' },
     { client: 'MEC Bearings', park: 'Panchu', dcCapacity: 1.0, bessCapacity: null, totalCost: 3.0, commissioningDate: '13-Aug-2026' },
-    { client: 'Kothari', park: 'Kolayat', dcCapacity: 0.86, bessCapacity: null, totalCost: 1.36, commissioningDate: '13-Aug-2026' },
+    { client: 'Kothari Welfare Institute', park: 'Kolayat', dcCapacity: 0.86, bessCapacity: null, totalCost: 2.61, commissioningDate: '13-Aug-2026' },
     { client: 'Inox Air', park: 'Dechu', dcCapacity: 12.0, bessCapacity: 11.29, totalCost: 28.16, commissioningDate: '25-Jul-2026' },
     { client: 'Kamdhenu Limited', park: 'Dechu', dcCapacity: 5.0, bessCapacity: null, totalCost: 14.55, commissioningDate: '02-Jun-2026' },
     { client: 'Lords Chloro Phase 2', park: 'Lunkaransar', dcCapacity: 21.0, bessCapacity: 1.45, totalCost: 29.4, commissioningDate: '02-Aug-2026' },

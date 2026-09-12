@@ -39,7 +39,7 @@ export const OB_PROJECT_MAP = [
   { client: 'ASK', projectId: '2346113000012388249' },
   { client: 'Mangalam', projectId: '2346113000014392229' },
   { client: 'MEC Bearings', projectId: '2346113000014425669' },
-  { client: 'Kothari', projectId: '2346113000015083223' },
+  { client: 'Kothari Welfare Institute', projectId: '2346113000015083223' },
   { client: 'Inox Air', projectId: '2346113000014589808' },
   { client: 'Kamdhenu Limited', projectId: '2346113000014787646' },
   { client: 'Lords Chloro Phase 2', projectId: '2346113000015083217' },
