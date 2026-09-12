@@ -61,7 +61,7 @@ const server = createServer(async (req, res) => {
         try { body = JSON.parse(raw); } catch { body = raw; }
       }
     }
-    const fakeReq = { method: req.method, query, body };
+    const fakeReq = { method: req.method, query, body, headers: req.headers || {} };
 
     try {
       const mod = await import(`./api/${handlerName}.js?t=${Date.now()}`);

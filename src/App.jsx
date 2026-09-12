@@ -12,7 +12,7 @@ import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveC
 import { FY_CONFIG, REV_STRUCTURE, EXP_STRUCTURE } from './data/structure.js';
 import { downloadFYSheet, downloadComparisonSheet } from './excelExport.js';
 
-const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Outlook & Order Book', 'Solar Parks', 'Manufacturing', 'UK - Arin Power', 'New Park Development'];
+const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Order Book & Outlook', 'Solar Parks', 'Manufacturing', 'UK - Arin Power', 'New Park Development'];
 
 function ChartIcon() {
   return (

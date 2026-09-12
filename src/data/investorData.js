@@ -17,6 +17,14 @@ const DEFAULTS = {
     outstanding: 19.65,       // Cr
     outstandingPct: 8.2,
   },
+  // The only 2 manually-set figures in the Live Order Book section — every
+  // other cell there is computed live from epcRevenueRecognition. Sourced
+  // from the Sept 2026 Order Book file's own "Target Revenue"/"Target
+  // Orders" summary rows.
+  orderBookTargets: {
+    targetOrderBook: 1500,  // Cr
+    targetRevenue: 1200,    // Cr
+  },
   // top-level orderBook removed — Live Order Book KPIs are now computed live
   // from epcRevenueRecognition (see Outlook.jsx), not stored/edited here.
   // (inv.ukArin.orderBook below is unrelated — UK Arin Power tab, untouched.)
