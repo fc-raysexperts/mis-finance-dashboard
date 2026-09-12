@@ -29,7 +29,7 @@ function autoColWidths(rows) {
 export function downloadOrderBookSheet(epcRevenueRecognition, invoiced) {
   const header = [
     'S No.', 'Client Name', 'Park Location', 'DC Capacity (MWp)', 'BESS Capacity (MWh)',
-    'Total Project Cost (Cr)', 'Invoiced FY26 (Cr)', 'Invoiced FY27 (Cr)', 'Invoiced Total (Cr)',
+    'Total Project Price (Cr)', 'Invoiced FY26 (Cr)', 'Invoiced FY27 (Cr)', 'Invoiced Total (Cr)',
     'Status (%)', 'Commissioning Date',
   ];
 

@@ -96,6 +96,10 @@ export default function Outlook({ curFY }) {
   const orderBookCurrentRevenue = sumInvoicedFY('FY27');
   const otherThanOrderBookRevenue = totalRevenueFY27 - orderBookCurrentRevenue;
   const revenueToBeBooked = inv.orderBookTargets.targetRevenue - orderBookCurrentRevenue - otherThanOrderBookRevenue;
+  // Current Order Book — total order value minus what's already been
+  // invoiced in FY26, leaving what's actually relevant going into FY27
+  // (the current year), rather than the full un-netted contract value.
+  const currentOrderBook = sumField('totalCost') - sumInvoicedFY('FY26');
 
   return (
     <div className="tab-content">
@@ -126,7 +130,7 @@ export default function Outlook({ curFY }) {
             <div className="kpi-label">Target Order Book</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-value">₹{sumField('totalCost').toFixed(2)} Cr</div>
+            <div className="kpi-value">₹{currentOrderBook.toFixed(2)} Cr</div>
             <div className="kpi-label">Current Order Book</div>
           </div>
           <div className="kpi-card">
@@ -185,7 +189,7 @@ export default function Outlook({ curFY }) {
                 <th rowSpan={2} style={{ textTransform: 'none' }}>Park Location</th>
                 <th rowSpan={2} style={{ textTransform: 'none' }}>DC Capacity</th>
                 <th rowSpan={2} style={{ textTransform: 'none' }}>BESS Capacity</th>
-                <th rowSpan={2} style={{ textTransform: 'none' }}>Total Project Cost</th>
+                <th rowSpan={2} style={{ textTransform: 'none' }}>Total Project Price</th>
                 <th colSpan={3} style={{ textTransform: 'none', textAlign: 'center' }}>Invoiced Amount</th>
                 <th rowSpan={2} style={{ textTransform: 'none' }}>Status</th>
                 <th rowSpan={2} style={{ textTransform: 'none' }}>Commissioning Date</th>
