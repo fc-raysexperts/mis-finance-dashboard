@@ -1,19 +1,19 @@
 import { getRedis, getSecondsUntilNext6AMIST, getZohoAuth, ZohoRateLimitError } from './_npdShared.js';
-import { OB_PROJECT_MAP, computeInvoicedForProject } from './_obShared.js';
+import { OB_PROJECT_MAP, computeInvoicedForProject, sixMonthsAgoISO } from './_obShared.js';
 
-// Split into 4 batches of ~10 projects, each its own staggered daily cron
-// (see vercel.json) — same reasoning as the NPD per-park crons: a single
-// job covering all 38 projects' full detail-call volume risks both the
-// 300s function timeout and the 100 req/min Zoho rate limit. Each batch
-// caches its own projects independently, so one project's failure (or one
-// batch's) never touches another's already-cached data.
+// Daily — now "recent only". Each project's own stableCutoff (set by the
+// monthly finalization run, or a single-project refresh) marks where its
+// already-finalized "stable" history ends; this only re-fetches and
+// re-computes what's happened SINCE that date, not a project's full
+// history every day. Falls back to a 6-month lookback if a project has
+// never been finalized yet — but note that "stable" itself stays empty
+// until finalization actually runs once (see obInvoicedMonthlyReload.js),
+// so run that once manually right after first deploying this change.
 const BATCH_SIZE = 10;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  // Same Vercel Cron auth pattern as npdCronRefreshPark.js — unprotected
-  // for local/manual testing when CRON_SECRET isn't set.
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
@@ -38,10 +38,14 @@ export default async function handler(req, res) {
   const errors = [];
   for (const { client, projectId } of slice) {
     try {
-      const data = await computeInvoicedForProject(H, ORG, projectId);
-      completed.push({ client, total: data.total, invoice_count: data.invoice_count, creditnote_count: data.creditnote_count });
+      let cutoff = null;
+      if (redis) { try { cutoff = await redis.get(`ob:cache:stableCutoff:${projectId}`); } catch { /* fall through */ } }
+      const sinceDate = cutoff || sixMonthsAgoISO();
+
+      const data = await computeInvoicedForProject(H, ORG, projectId, sinceDate);
+      completed.push({ client, since: sinceDate, total: data.total, invoice_count: data.invoice_count, creditnote_count: data.creditnote_count });
       if (redis) {
-        try { await redis.set(`ob:cache:invoiced:${client}`, data, { ex: getSecondsUntilNext6AMIST() + 3600 }); }
+        try { await redis.set(`ob:cache:recent:${projectId}`, data, { ex: getSecondsUntilNext6AMIST() + 3600 }); }
         catch (e) { errors.push({ client, stage: 'cache_write', error: e.message }); }
       }
     } catch (err) {

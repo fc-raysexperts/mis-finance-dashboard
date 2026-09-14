@@ -9,7 +9,10 @@
     "api/npdAllParksSummary.js": { "maxDuration": 300 },
     "api/npdClearCache.js": { "maxDuration": 60 },
     "api/npdGenericAccountsRefresh.js": { "maxDuration": 300 },
-    "api/obInvoicedRefreshBatch.js": { "maxDuration": 300 }
+    "api/obInvoicedRefreshBatch.js": { "maxDuration": 300 },
+    "api/obInvoicedMonthlyReload.js": { "maxDuration": 300 },
+    "api/obInvoicedRefreshOne.js": { "maxDuration": 300 },
+    "api/obInvoicedStatus.js": { "maxDuration": 300 }
   },
   "crons": [
     { "path": "/api/npdGenericAccountsRefresh?account=cwip",  "schedule": "20 0 * * *" },
@@ -33,6 +36,10 @@
     { "path": "/api/obInvoicedRefreshBatch?batch=1", "schedule": "50 1 * * *" },
     { "path": "/api/obInvoicedRefreshBatch?batch=2", "schedule": "0 2 * * *" },
     { "path": "/api/obInvoicedRefreshBatch?batch=3", "schedule": "10 2 * * *" },
-    { "path": "/api/obInvoicedRefreshBatch?batch=4", "schedule": "20 2 * * *" }
+    { "path": "/api/obInvoicedRefreshBatch?batch=4", "schedule": "20 2 * * *" },
+    { "path": "/api/obInvoicedMonthlyReload?batch=1", "schedule": "30 16 8-14 * *" },
+    { "path": "/api/obInvoicedMonthlyReload?batch=2", "schedule": "45 16 8-14 * *" },
+    { "path": "/api/obInvoicedMonthlyReload?batch=3", "schedule": "0 17 8-14 * *" },
+    { "path": "/api/obInvoicedMonthlyReload?batch=4", "schedule": "15 17 8-14 * *" }
   ]
 }

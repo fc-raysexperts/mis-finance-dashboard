@@ -30,18 +30,28 @@ export function downloadOrderBookSheet(epcRevenueRecognition, invoiced) {
   const header = [
     'S No.', 'Client Name', 'Park Location', 'DC Capacity (MWp)', 'BESS Capacity (MWh)',
     'Total Project Price (Cr)', 'Invoiced FY26 (Cr)', 'Invoiced FY27 (Cr)', 'Invoiced Total (Cr)',
-    'Status (%)', 'Commissioning Date',
+    'Invoice Status (%)', 'Receipt FY26 (Cr)', 'Receipt FY27 (Cr)', 'Receipt Total (Cr)',
+    'Receipts Status (%)', 'Commissioning Date',
   ];
 
   const rows = [header];
-  let sumDC = 0, sumBESS = 0, sumTPC = 0, sumFY26 = 0, sumFY27 = 0, sumInvoiced = 0;
+  let sumDC = 0, sumBESS = 0, sumTPC = 0, sumFY26 = 0, sumFY27 = 0, sumInvoiced = 0, sumRFY26 = 0, sumRFY27 = 0, sumReceipt = 0;
 
   epcRevenueRecognition.forEach((row, i) => {
-    const iv = invoiced?.[row.client] || null;
+    const iv = invoiced?.[row.projectId] || null;
     const fy26 = iv?.byFY?.FY26 ?? null;
     const fy27 = iv?.byFY?.FY27 ?? null;
     const totalInvoiced = iv?.total ?? null;
-    const statusPct = (totalInvoiced != null && row.totalCost) ? Number(((totalInvoiced / row.totalCost) * 100).toFixed(1)) : null;
+    const invoiceStatusPct = (totalInvoiced != null && row.totalCost) ? Number(((totalInvoiced / row.totalCost) * 100).toFixed(1)) : null;
+    const rFy26 = iv?.paidByFY?.FY26 ?? null;
+    const rFy27 = iv?.paidByFY?.FY27 ?? null;
+    // Capped at Invoiced Amount — same reasoning as Outlook.jsx: a credit
+    // note against an already-paid invoice can push the raw paid total
+    // above net Invoiced Amount, which is an overpayment/credit situation,
+    // not unreceived revenue, so it shouldn't read as >100% Receipts Status.
+    const totalReceiptRaw = iv?.paidTotal ?? null;
+    const totalReceipt = (totalReceiptRaw != null && totalInvoiced != null) ? Math.min(totalReceiptRaw, totalInvoiced) : totalReceiptRaw;
+    const receiptStatusPct = (totalReceipt != null && totalInvoiced) ? Number(((totalReceipt / totalInvoiced) * 100).toFixed(1)) : null;
 
     sumDC += row.dcCapacity || 0;
     sumBESS += row.bessCapacity || 0;
@@ -49,20 +59,27 @@ export function downloadOrderBookSheet(epcRevenueRecognition, invoiced) {
     sumFY26 += fy26 || 0;
     sumFY27 += fy27 || 0;
     sumInvoiced += totalInvoiced || 0;
+    sumRFY26 += rFy26 || 0;
+    sumRFY27 += rFy27 || 0;
+    sumReceipt += totalReceipt || 0;
 
     rows.push([
       i + 1, row.client, row.park,
       fmtCr(row.dcCapacity), fmtCr(row.bessCapacity), fmtCr(row.totalCost),
       fmtCr(fy26), fmtCr(fy27), fmtCr(totalInvoiced),
-      statusPct === null ? '' : statusPct,
+      invoiceStatusPct === null ? '' : invoiceStatusPct,
+      fmtCr(rFy26), fmtCr(rFy27), fmtCr(totalReceipt),
+      receiptStatusPct === null ? '' : receiptStatusPct,
       row.commissioningDate || '',
     ]);
   });
 
-  const totalStatus = sumTPC > 0 ? Number(((sumInvoiced / sumTPC) * 100).toFixed(1)) : '';
+  const totalInvoiceStatus = sumTPC > 0 ? Number(((sumInvoiced / sumTPC) * 100).toFixed(1)) : '';
+  const totalReceiptStatus = sumInvoiced > 0 ? Number(((sumReceipt / sumInvoiced) * 100).toFixed(1)) : '';
   rows.push([
     '', 'Total', '', fmtCr(sumDC), fmtCr(sumBESS), fmtCr(sumTPC),
-    fmtCr(sumFY26), fmtCr(sumFY27), fmtCr(sumInvoiced), totalStatus, '',
+    fmtCr(sumFY26), fmtCr(sumFY27), fmtCr(sumInvoiced), totalInvoiceStatus,
+    fmtCr(sumRFY26), fmtCr(sumRFY27), fmtCr(sumReceipt), totalReceiptStatus, '',
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet(rows);

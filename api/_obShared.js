@@ -3,7 +3,11 @@
 // investigation, not guessed) and the per-project invoice/credit-note
 // aggregation. `client` strings here MUST match investorData.js's
 // epcRevenueRecognition `client` field exactly — that's the join key used
-// at render time in Outlook.jsx.
+// to look up which project_id a given table row maps to. The CACHE itself
+// (see obInvoicedStatus.js / obInvoicedRefreshBatch.js) is keyed by
+// project_id, not by this client string, specifically so that renaming a
+// client in investorData.js — as already happened more than once during
+// this build — never invalidates already-fetched Zoho data.
 
 import { fetchZohoJson, processBatched, sleep } from './_npdShared.js';
 
@@ -52,7 +56,7 @@ export const OB_PROJECT_MAP = [
 // LE-code convention every other row used — NTPC via its NVVN counterparty
 // on the Surpura BESPA, Rockwood via "New" in the project name vs. the
 // separate "Extension" project for its older, unrelated engagement. Flagged
-// here so obInvoicedRefreshBatch.js's output makes the uncertainty visible
+// here so the refresh endpoints' output makes the uncertainty visible
 // instead of silently trusting a same-confidence match.
 export const TENTATIVE_MATCHES = new Set(['NTPC', 'Rockwood Hotels & Resorts Ltd.']);
 
@@ -64,6 +68,13 @@ export function fyLabelForDate(dateStr) {
   if (!y || !m) return null;
   const fyEndYear = m >= 4 ? y + 1 : y;
   return `FY${String(fyEndYear).slice(2)}`;
+}
+
+// Returns 'YYYY-MM-DD' for exactly 6 calendar months before today.
+export function sixMonthsAgoISO() {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 6);
+  return d.toISOString().slice(0, 10);
 }
 
 async function fetchAllPages(baseUrl, H, listKey) {
@@ -80,42 +91,54 @@ async function fetchAllPages(baseUrl, H, listKey) {
   return all;
 }
 
-// For one project: Sum(Invoice sub_total) − Sum(Credit Note sub_total),
-// bucketed by FY (from each transaction's own date), plus a true grand
-// total across everything found — not just the FY columns added together,
-// so it stays correct even if a project has billing outside FY26/FY27.
 // Draft and void transactions are excluded — a draft invoice hasn't
 // actually been issued to the client, so counting it would overstate real
-// billing; void is obviously never real. Everything else (sent, overdue,
-// paid, partially_paid, closed) counts.
+// billing; void is obviously never real; rejected the same. Everything
+// else (sent, overdue, paid, partially_paid, closed) counts.
 const EXCLUDED_STATUSES = new Set(['draft', 'void', 'rejected']);
+const CR = 10000000; // 1 Crore = 1,00,00,000 — Zoho returns raw rupees, this table stores Cr
 
-export async function computeInvoicedForProject(H, ORG, projectId) {
+// The one real cost driver is the per-transaction DETAIL call (needed for
+// sub_total, since list responses omit it) — the list fetch itself is
+// cheap even for a project with dozens of invoices. So `sinceDate` filters
+// AFTER the (cheap) list fetch and BEFORE the (expensive, rate-limited)
+// detail calls: pass null for a project's full history (used by the
+// monthly finalization run and single-project refresh), or a date string
+// to only pay the detail-call cost for transactions on/after it (used by
+// the daily batch cron, so old/settled billing is never re-fetched daily).
+export async function computeInvoicedForProject(H, ORG, projectId, sinceDate = null) {
   const [invoicesRaw, creditnotesRaw] = await Promise.all([
     fetchAllPages(`https://www.zohoapis.in/books/v3/invoices?${ORG}&project_id=${projectId}`, H, 'invoices'),
     fetchAllPages(`https://www.zohoapis.in/books/v3/creditnotes?${ORG}&project_id=${projectId}`, H, 'creditnotes'),
   ]);
-  const invoices = invoicesRaw.filter(i => !EXCLUDED_STATUSES.has(i.status));
-  const creditnotes = creditnotesRaw.filter(c => !EXCLUDED_STATUSES.has(c.status));
-
-  // Zoho returns sub_total in raw rupees. Total Project Cost — and every
-  // other ₹ Cr figure already in this table — is stored in Crores, so
-  // convert here, once, at the source, rather than leaving every consumer
-  // of this cached data (Outlook.jsx now, anything else later) to
-  // remember to do it themselves. 1 Crore = 1,00,00,000.
-  const CR = 10000000;
+  let invoices = invoicesRaw.filter(i => !EXCLUDED_STATUSES.has(i.status));
+  let creditnotes = creditnotesRaw.filter(c => !EXCLUDED_STATUSES.has(c.status));
+  if (sinceDate) {
+    invoices = invoices.filter(i => (i.date || '') >= sinceDate);
+    creditnotes = creditnotes.filter(c => (c.date || '') >= sinceDate);
+  }
 
   const byFY = {};
   let total = 0;
+  // Receipt Amount — pre-tax sub_total of invoices Zoho itself has marked
+  // "paid", nothing else. No credit-note offset here: that's a deliberate
+  // difference from Invoiced Amount, since a credit note reduces what's
+  // billed, not what's been physically received against a paid invoice.
+  const paidByFY = {};
+  let paidTotal = 0;
 
   const invDetails = await processBatched(invoices, 3, 1600, async (inv) => {
     const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/invoices/${inv.invoice_id}?${ORG}`, H);
-    return { date: inv.date, sub_total: (d.invoice?.sub_total || 0) / CR };
+    return { date: inv.date, status: inv.status, sub_total: (d.invoice?.sub_total || 0) / CR };
   });
-  for (const { date, sub_total } of invDetails) {
+  for (const { date, status, sub_total } of invDetails) {
     const fy = fyLabelForDate(date) || 'other';
     byFY[fy] = (byFY[fy] || 0) + sub_total;
     total += sub_total;
+    if (status === 'paid') {
+      paidByFY[fy] = (paidByFY[fy] || 0) + sub_total;
+      paidTotal += sub_total;
+    }
   }
 
   const cnDetails = await processBatched(creditnotes, 3, 1600, async (cn) => {
@@ -130,11 +153,28 @@ export async function computeInvoicedForProject(H, ORG, projectId) {
 
   for (const k of Object.keys(byFY)) byFY[k] = Math.round(byFY[k] * 100) / 100;
   total = Math.round(total * 100) / 100;
+  for (const k of Object.keys(paidByFY)) paidByFY[k] = Math.round(paidByFY[k] * 100) / 100;
+  paidTotal = Math.round(paidTotal * 100) / 100;
 
   return {
-    byFY, total,
+    byFY, total, paidByFY, paidTotal,
     invoice_count: invoices.length, creditnote_count: creditnotes.length,
-    excluded_draft_or_void: (invoicesRaw.length - invoices.length) + (creditnotesRaw.length - creditnotes.length),
     refreshed_at: new Date().toISOString(),
   };
+}
+
+// Merge a project's cached "stable" (everything up to the last monthly
+// finalization) and "recent" (everything since then) portions into one
+// figure. Both are optional — either may not have run yet.
+export function mergeStableAndRecent(stable, recent) {
+  if (!stable && !recent) return null;
+  const byFY = {}, paidByFY = {};
+  for (const src of [stable, recent]) {
+    if (!src) continue;
+    for (const [fy, v] of Object.entries(src.byFY || {})) byFY[fy] = Math.round(((byFY[fy] || 0) + v) * 100) / 100;
+    for (const [fy, v] of Object.entries(src.paidByFY || {})) paidByFY[fy] = Math.round(((paidByFY[fy] || 0) + v) * 100) / 100;
+  }
+  const total = Math.round((((stable?.total) || 0) + ((recent?.total) || 0)) * 100) / 100;
+  const paidTotal = Math.round((((stable?.paidTotal) || 0) + ((recent?.paidTotal) || 0)) * 100) / 100;
+  return { byFY, total, paidByFY, paidTotal };
 }
