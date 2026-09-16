@@ -13,7 +13,7 @@ export default function Outlook({ curFY }) {
   useEffect(() => { loadInvestorData().then(setInv); }, []);
 
   // Invoiced Amount / Status — self-healing on the backend (see
-  // obInvoicedStatus.js): fast from cache when warm, computed live on a
+  // obInvoiced.js, mode=status): fast from cache when warm, computed live on a
   // cache miss. Fetched here in 4 chunks matching the same 10-project
   // grouping the crons use, run in parallel, each merged in as it resolves
   // — so if some projects are cold (slow) and others are warm (instant),
@@ -30,7 +30,7 @@ export default function Outlook({ curFY }) {
     let doneCount = 0;
     const TOTAL_BATCHES = 4;
     for (let batch = 1; batch <= TOTAL_BATCHES; batch++) {
-      fetch(`/api/obInvoicedStatus?batch=${batch}`)
+      fetch(`/api/obInvoiced?mode=status&batch=${batch}`)
         .then(r => r.json())
         .then(d => { if (!cancelled) setInvoiced(prev => ({ ...prev, ...(d.invoiced || {}) })); })
         .catch(() => { /* this chunk failed — leave whatever's already loaded alone */ })
@@ -178,7 +178,7 @@ export default function Outlook({ curFY }) {
           Live Order Book's own cells (Current Order Book, Order Book
           Current Revenue, etc.) depend on this same data. On a cold day
           (first visit since the last cache reset) this can show for a
-          couple of minutes while obInvoicedStatus.js computes live; on a
+          couple of minutes while obInvoiced.js (mode=status) computes live; on a
           warm day it disappears almost immediately. */}
       {invoicedLoading && (
         <div className="npd-loading">

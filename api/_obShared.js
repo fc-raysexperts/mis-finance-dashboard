@@ -1,13 +1,14 @@
 // Shared logic for the Order Book "Invoiced Amount" feature — the LE-code
 // → Zoho project_id mapping (built together with Jatin via a live debug
 // investigation, not guessed) and the per-project invoice/credit-note
-// aggregation. `client` strings here MUST match investorData.js's
-// epcRevenueRecognition `client` field exactly — that's the join key used
-// to look up which project_id a given table row maps to. The CACHE itself
-// (see obInvoicedStatus.js / obInvoicedRefreshBatch.js) is keyed by
-// project_id, not by this client string, specifically so that renaming a
-// client in investorData.js — as already happened more than once during
-// this build — never invalidates already-fetched Zoho data.
+// aggregation. investorData.js's epcRevenueRecognition rows each carry
+// their own projectId directly (added after a client-rename broke the
+// name-based lookup this used to rely on) — OB_PROJECT_MAP below now
+// exists mainly for the cron/refresh endpoints (api/obInvoiced.js) to
+// iterate over every project, and for readable client names in their
+// diagnostic output. The CACHE itself is keyed by project_id, not by
+// client name, so renaming a client in investorData.js never invalidates
+// already-fetched Zoho data.
 
 import { fetchZohoJson, processBatched, sleep } from './_npdShared.js';
 
