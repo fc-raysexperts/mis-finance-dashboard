@@ -45,12 +45,10 @@ export function downloadOrderBookSheet(epcRevenueRecognition, invoiced) {
     const invoiceStatusPct = (totalInvoiced != null && row.totalCost) ? Number(((totalInvoiced / row.totalCost) * 100).toFixed(1)) : null;
     const rFy26 = iv?.paidByFY?.FY26 ?? null;
     const rFy27 = iv?.paidByFY?.FY27 ?? null;
-    // Capped at Invoiced Amount — same reasoning as Outlook.jsx: a credit
-    // note against an already-paid invoice can push the raw paid total
-    // above net Invoiced Amount, which is an overpayment/credit situation,
-    // not unreceived revenue, so it shouldn't read as >100% Receipts Status.
-    const totalReceiptRaw = iv?.paidTotal ?? null;
-    const totalReceipt = (totalReceiptRaw != null && totalInvoiced != null) ? Math.min(totalReceiptRaw, totalInvoiced) : totalReceiptRaw;
+    // paidTotal already nets out credit notes applied against Paid
+    // invoices specifically (see _obShared.js) — no cap needed, this is
+    // the real computed figure, matching Outlook.jsx.
+    const totalReceipt = iv?.paidTotal ?? null;
     const receiptStatusPct = (totalReceipt != null && totalInvoiced) ? Number(((totalReceipt / totalInvoiced) * 100).toFixed(1)) : null;
 
     sumDC += row.dcCapacity || 0;

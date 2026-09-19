@@ -108,18 +108,6 @@ export default function Outlook({ curFY }) {
     const v = fyKey === 'total' ? iv?.paidTotal : iv?.paidByFY?.[fyKey];
     return s + (v || 0);
   }, 0);
-  // Capped per-project before summing (same logic as each row's own Total
-  // Receipt cell) — guarantees this footer figure, and the Receipts Status
-  // % derived from it, can never exceed 100% either, for the same reason
-  // an individual row can't: each term in this sum is already ≤ that
-  // project's own Invoiced Amount.
-  const sumReceiptTotalCapped = () => inv.epcRevenueRecognition.reduce((s, r) => {
-    const iv = invoicedFor(r.projectId);
-    const raw = iv?.paidTotal;
-    const invoicedR = iv?.total;
-    const capped = (raw != null && invoicedR != null) ? Math.min(raw, invoicedR) : raw;
-    return s + (capped || 0);
-  }, 0);
   // S No. and Client Name are frozen (position: sticky) so they stay in
   // view while the rest of the table scrolls horizontally — there are now
   // too many columns to fit without it. S No. is forced to an exact width
@@ -132,6 +120,13 @@ export default function Outlook({ curFY }) {
   const SNO_WIDTH = 52;
   const stickyCol = (leftPx, bg) => ({ position: 'sticky', left: `${leftPx}px`, background: bg, zIndex: 2 });
   const snoColStyle = (bg) => ({ ...stickyCol(0, bg), width: `${SNO_WIDTH}px`, minWidth: `${SNO_WIDTH}px`, maxWidth: `${SNO_WIDTH}px` });
+  // Thin dividers after Client Name, Total Project Price, and Invoice
+  // Status, to help visually separate the table's sections (identity /
+  // capacity+price / invoiced / receipts). The Client Name one is folded
+  // into its own sticky style below so it scrolls/sticks with that column
+  // rather than being left behind.
+  const vdl = { borderRight: '1px solid #cbd5e1' };
+  const clientNameColStyle = (bg) => ({ ...stickyCol(52, bg), ...vdl });
   // Wraps these specific headers onto 2 lines instead of letting the
   // browser widen the whole column just to fit them on one — narrows
   // several columns that were otherwise wider than their actual data needs.
@@ -258,13 +253,13 @@ export default function Outlook({ curFY }) {
             <thead>
               <tr>
                 <th rowSpan={2} style={{ textTransform: 'none', ...snoColStyle('#f0f4ff') }}>S No.</th>
-                <th rowSpan={2} style={{ textTransform: 'none', ...stickyCol(52, '#f0f4ff') }}>Client Name</th>
+                <th rowSpan={2} style={{ textTransform: 'none', ...clientNameColStyle('#f0f4ff') }}>Client Name</th>
                 <th rowSpan={2} style={wrapHeader}>Park Location</th>
                 <th rowSpan={2} style={wrapHeader}>DC Capacity</th>
                 <th rowSpan={2} style={wrapHeader}>BESS Capacity</th>
-                <th rowSpan={2} style={wrapHeader}>Total Project Price</th>
+                <th rowSpan={2} style={{ ...wrapHeader, ...vdl }}>Total Project Price</th>
                 <th colSpan={3} style={{ textTransform: 'none', textAlign: 'center' }}>Invoiced Amount</th>
-                <th rowSpan={2} style={wrapHeader}>Invoice Status</th>
+                <th rowSpan={2} style={{ ...wrapHeader, ...vdl }}>Invoice Status</th>
                 <th colSpan={3} style={{ textTransform: 'none', textAlign: 'center' }}>Receipt Amount</th>
                 <th rowSpan={2} style={wrapHeader}>Receipts Status</th>
                 <th rowSpan={2} style={wrapHeader}>Commissioning Date</th>
@@ -288,23 +283,16 @@ export default function Outlook({ curFY }) {
                 const invoiceStatusPct = (totalInvoiced != null && row.totalCost) ? (totalInvoiced / row.totalCost) * 100 : null;
                 const rFy26 = iv?.paidByFY?.FY26 ?? null;
                 const rFy27 = iv?.paidByFY?.FY27 ?? null;
-                // Capped at Invoiced Amount — not the raw paid-invoice sum.
-                // Root cause (confirmed against Soni's real Zoho data): when
-                // a credit note is issued against an invoice that's already
-                // marked Paid, Invoiced Amount (net of credit notes) drops
-                // below the raw paid total (which doesn't net credit notes
-                // out, deliberately, per the field's own definition) — so an
-                // otherwise-correct "money physically received" figure can
-                // exceed "net amount actually billed." The cap reflects that
-                // anything beyond net billing is an overpayment/credit
-                // situation, not unreceived revenue, so it shouldn't inflate
-                // Receipts Status past 100%. Only the Total is capped here —
-                // the FY26/FY27 breakdown below stays as the raw paid figures,
-                // since forcing a fair per-FY cap would need allocating the
-                // reduction across years with no natural rule for how to
-                // split it.
-                const totalReceiptRaw = iv?.paidTotal ?? null;
-                const totalReceipt = (totalReceiptRaw != null && totalInvoiced != null) ? Math.min(totalReceiptRaw, totalInvoiced) : totalReceiptRaw;
+                // paidTotal already nets out credit notes applied against
+                // Paid invoices specifically (see _obShared.js), so no
+                // display-layer cap needed anymore — this is the real,
+                // computed figure, not an approximation of it. It can, in
+                // principle, still exceed Invoiced Amount in one genuine
+                // scenario: most of a project's credit notes apply against
+                // *unpaid* invoices while a large share remains genuinely
+                // paid — that reflects real overpayment relative to net
+                // billing, not a data artifact, so it's shown as-is.
+                const totalReceipt = iv?.paidTotal ?? null;
                 const receiptStatusPct = (totalReceipt != null && totalInvoiced) ? (totalReceipt / totalInvoiced) * 100 : null;
                 const bodyBg = '#fff';
                 return (
@@ -312,15 +300,15 @@ export default function Outlook({ curFY }) {
                     <td style={snoColStyle(bodyBg)}>{i + 1}</td>
                     {editMode ? (
                       <>
-                        <td style={stickyCol(52, bodyBg)}><input className="edit-input edit-input-text" value={row.client} onChange={e => updateArrItem(['epcRevenueRecognition'], i, 'client', e.target.value)} /></td>
+                        <td style={clientNameColStyle(bodyBg)}><input className="edit-input edit-input-text" value={row.client} onChange={e => updateArrItem(['epcRevenueRecognition'], i, 'client', e.target.value)} /></td>
                         <td><input className="edit-input edit-input-text" value={row.park} onChange={e => updateArrItem(['epcRevenueRecognition'], i, 'park', e.target.value)} /></td>
                         <td><input {...numInputProps(row, i, 'dcCapacity')} /></td>
                         <td><input {...numInputProps(row, i, 'bessCapacity')} /></td>
-                        <td><input {...numInputProps(row, i, 'totalCost')} /></td>
+                        <td style={vdl}><input {...numInputProps(row, i, 'totalCost')} /></td>
                         <td>{fmtNum(fy26, 'Cr')}</td>
                         <td>{fmtNum(fy27, 'Cr')}</td>
                         <td>{fmtNum(totalInvoiced, 'Cr')}</td>
-                        <td>{invoiceStatusPct != null ? `${invoiceStatusPct.toFixed(1)}%` : '—'}</td>
+                        <td style={vdl}>{invoiceStatusPct != null ? `${invoiceStatusPct.toFixed(1)}%` : '—'}</td>
                         <td>{fmtNum(rFy26, 'Cr')}</td>
                         <td>{fmtNum(rFy27, 'Cr')}</td>
                         <td>{fmtNum(totalReceipt, 'Cr')}</td>
@@ -330,13 +318,13 @@ export default function Outlook({ curFY }) {
                       </>
                     ) : (
                       <>
-                        <td style={stickyCol(52, bodyBg)}>{row.client}</td><td>{row.park}</td>
+                        <td style={clientNameColStyle(bodyBg)}>{row.client}</td><td>{row.park}</td>
                         <td>{fmtNum(row.dcCapacity, 'MWp')}</td><td>{fmtNum(row.bessCapacity, 'MWh')}</td>
-                        <td>{fmtNum(row.totalCost, 'Cr')}</td>
+                        <td style={vdl}>{fmtNum(row.totalCost, 'Cr')}</td>
                         <td>{fmtNum(fy26, 'Cr')}</td>
                         <td>{fmtNum(fy27, 'Cr')}</td>
                         <td>{fmtNum(totalInvoiced, 'Cr')}</td>
-                        <td>{invoiceStatusPct != null ? `${invoiceStatusPct.toFixed(1)}%` : '—'}</td>
+                        <td style={vdl}>{invoiceStatusPct != null ? `${invoiceStatusPct.toFixed(1)}%` : '—'}</td>
                         <td>{fmtNum(rFy26, 'Cr')}</td>
                         <td>{fmtNum(rFy27, 'Cr')}</td>
                         <td>{fmtNum(totalReceipt, 'Cr')}</td>
@@ -349,19 +337,19 @@ export default function Outlook({ curFY }) {
               })}
               <tr className="investor-row-strong">
                 <td style={snoColStyle('#f8faff')}></td>
-                <td style={stickyCol(52, '#f8faff')}>Total</td>
+                <td style={clientNameColStyle('#f8faff')}>Total</td>
                 <td></td>
                 <td>{sumField('dcCapacity').toFixed(2)} MWp</td>
                 <td>{sumField('bessCapacity').toFixed(2)} MWh</td>
-                <td>{sumField('totalCost').toFixed(2)} Cr</td>
+                <td style={vdl}>{sumField('totalCost').toFixed(2)} Cr</td>
                 <td>{sumInvoicedFY('FY26').toFixed(2)} Cr</td>
                 <td>{sumInvoicedFY('FY27').toFixed(2)} Cr</td>
                 <td>{sumInvoicedFY('total').toFixed(2)} Cr</td>
-                <td>{sumField('totalCost') > 0 ? `${((sumInvoicedFY('total') / sumField('totalCost')) * 100).toFixed(1)}%` : '—'}</td>
+                <td style={vdl}>{sumField('totalCost') > 0 ? `${((sumInvoicedFY('total') / sumField('totalCost')) * 100).toFixed(1)}%` : '—'}</td>
                 <td>{sumReceiptFY('FY26').toFixed(2)} Cr</td>
                 <td>{sumReceiptFY('FY27').toFixed(2)} Cr</td>
-                <td>{sumReceiptTotalCapped().toFixed(2)} Cr</td>
-                <td>{sumInvoicedFY('total') > 0 ? `${((sumReceiptTotalCapped() / sumInvoicedFY('total')) * 100).toFixed(1)}%` : '—'}</td>
+                <td>{sumReceiptFY('total').toFixed(2)} Cr</td>
+                <td>{sumInvoicedFY('total') > 0 ? `${((sumReceiptFY('total') / sumInvoicedFY('total')) * 100).toFixed(1)}%` : '—'}</td>
                 <td></td>
                 {editMode && <td></td>}
               </tr>
@@ -369,7 +357,7 @@ export default function Outlook({ curFY }) {
           </table>
         </div>
         <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>
-          Invoiced Amount and Invoice Status are pulled from Zoho Books by a nightly refresh — blank cells mean that project's first refresh hasn't run yet, not that billing is zero. Receipt Amount covers only invoices Zoho has marked "Paid"; Receipts Status is Total Receipt Amount as a % of Total Invoiced Amount, capped at 100% — if a credit note is issued against an already-paid invoice, that's an overpayment/credit situation, not unreceived revenue.
+          Invoiced Amount and Invoice Status are pulled from Zoho Books by a nightly refresh — blank cells mean that project's first refresh hasn't run yet, not that billing is zero. Receipt Amount covers only invoices Zoho has marked "Paid," minus any credit notes applied specifically against a Paid invoice; Receipts Status is Total Receipt Amount as a % of Total Invoiced Amount.
         </div>
         {editMode && <button className="add-row-btn" onClick={addRow}>+ Add Row</button>}
       </div>

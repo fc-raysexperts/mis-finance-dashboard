@@ -15,13 +15,13 @@ import { fetchZohoJson, processBatched, sleep } from './_npdShared.js';
 export const OB_PROJECT_MAP = [
   { client: 'Saville Hospital and Research Centre', projectId: '2346113000014392237' },
   { client: 'Soni International Jewelry Pvt. Ltd.', projectId: '2346113000024545249' },
-  { client: 'JECRC', projectId: '2346113000024545225' },
-  { client: 'Alliance Poly sacks', projectId: '2346113000024545243' },
-  { client: 'Siddharth Polysacks', projectId: '2346113000024545237' },
+  { client: 'JECRC University', projectId: '2346113000024545225' },
+  { client: 'Alliance Polysacks Pvt. Ltd.', projectId: '2346113000024545243' },
+  { client: 'Sidharth Polysacks Pvt. Ltd.', projectId: '2346113000024545237' },
   { client: 'BKT Industries (Balkrishna Industries Ltd.)', projectId: '2346113000024617685' },
   { client: 'Shree Ananta Dream Homes Pvt. Ltd.', projectId: '2346113000025225320' },
   { client: 'Metallic Rolls', projectId: '2346113000025225326' },
-  { client: 'Ravi Surya Spa', projectId: '2346113000025824143' },
+  { client: 'Ravi Surya Developers Pvt. Ltd.', projectId: '2346113000025824143' },
   { client: 'JSW Green Energy Thirteen Ltd.', projectId: '2346113000026152074' },
   { client: 'JSW Green Energy Fifteen Ltd.', projectId: '2346113000026152068' },
   { client: 'Wonder Cement Ltd. — Phase 3', projectId: '2346113000033276071' },
@@ -40,17 +40,17 @@ export const OB_PROJECT_MAP = [
   { client: 'Premier Bars Ltd.', projectId: '2346113000035981136' },
   { client: 'Wonder Cement Ltd. — Phase 4', projectId: '2346113000035981197' },
   { client: 'Zetwerk Manufacturing Businesses Ltd.', projectId: '2346113000035981078' },
-  { client: 'Uttam Strips', projectId: '2346113000008468113' },
-  { client: 'ASK', projectId: '2346113000012388249' },
-  { client: 'Mangalam', projectId: '2346113000014392229' },
-  { client: 'MEC Bearings', projectId: '2346113000014425669' },
+  { client: 'Uttam Strips Ltd.', projectId: '2346113000008468113' },
+  { client: 'ASK Automobiles Private Limited', projectId: '2346113000012388249' },
+  { client: 'Mangalam Spa Resorts', projectId: '2346113000014392229' },
+  { client: 'MEC Bearings Pvt Ltd', projectId: '2346113000014425669' },
   { client: 'Kothari Welfare Institute', projectId: '2346113000015083223' },
-  { client: 'Inox Air', projectId: '2346113000014589808' },
-  { client: 'Kamdhenu Limited', projectId: '2346113000014787646' },
-  { client: 'Lords Chloro Phase 2', projectId: '2346113000015083217' },
-  { client: 'Wonder Cement Phase 2', projectId: '2346113000015444806' },
-  { client: 'Raksha Bars', projectId: '2346113000024486636' },
-  { client: 'Jagdamba', projectId: '2346113000024545231' },
+  { client: 'INOX AP Private Limited', projectId: '2346113000014589808' },
+  { client: 'Kamdhenu Ltd.', projectId: '2346113000014787646' },
+  { client: 'Lords Chloro Alkali Ltd. - Phase 2', projectId: '2346113000015083217' },
+  { client: 'Wonder Cement Ltd. - Phase 2', projectId: '2346113000015444806' },
+  { client: 'Raksha Bars Private Limited', projectId: '2346113000024486636' },
+  { client: 'Jagdamba TMT Mills Ltd.', projectId: '2346113000024545231' },
 ];
 
 // These two were matched by project/customer naming rather than the direct
@@ -122,11 +122,17 @@ export async function computeInvoicedForProject(H, ORG, projectId, sinceDate = n
   const byFY = {};
   let total = 0;
   // Receipt Amount — pre-tax sub_total of invoices Zoho itself has marked
-  // "paid", nothing else. No credit-note offset here: that's a deliberate
-  // difference from Invoiced Amount, since a credit note reduces what's
-  // billed, not what's been physically received against a paid invoice.
+  // "paid". Credit notes DO offset this now, but only the portion actually
+  // applied against a Paid invoice (via Zoho's own invoices_credited
+  // linkage on each credit note) — confirmed against Soni's real data: a
+  // credit note applied to an unpaid invoice has nothing to do with what's
+  // been received, so it correctly leaves Receipt Amount untouched; one
+  // applied to a Paid invoice correctly reduces it. This replaces an
+  // earlier flat "cap Receipt Amount at Invoiced Amount" patch, which hid
+  // the real number instead of computing it correctly.
   const paidByFY = {};
   let paidTotal = 0;
+  const paidInvoiceIds = new Set(invoices.filter(i => i.status === 'paid').map(i => i.invoice_id));
 
   const invDetails = await processBatched(invoices, 3, 1600, async (inv) => {
     const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/invoices/${inv.invoice_id}?${ORG}`, H);
@@ -144,12 +150,35 @@ export async function computeInvoicedForProject(H, ORG, projectId, sinceDate = n
 
   const cnDetails = await processBatched(creditnotes, 3, 1600, async (cn) => {
     const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/creditnotes/${cn.creditnote_id}?${ORG}`, H);
-    return { date: cn.date, sub_total: (d.creditnote?.sub_total || 0) / CR };
+    const full = d.creditnote || {};
+    const subTotalCr = (full.sub_total || 0) / CR;
+    // invoices_credited: which invoice(s) this credit note was actually
+    // applied against, and how much (raw rupees, possibly tax-inclusive —
+    // used only as a proportion below, so that ambiguity doesn't matter).
+    const applied = full.invoices_credited || [];
+    const totalCreditedRaw = applied.reduce((s, a) => s + (a.credited_amount || 0), 0);
+    let paidPortionCr = 0;
+    if (totalCreditedRaw > 0) {
+      for (const a of applied) {
+        if (paidInvoiceIds.has(a.invoice_id)) {
+          // This invoice's share of the credit note, applied to the
+          // credit note's own pre-tax sub_total — not credited_amount
+          // directly, since that may include tax and sub_total is the
+          // figure everything else here is already measured in.
+          paidPortionCr += ((a.credited_amount || 0) / totalCreditedRaw) * subTotalCr;
+        }
+      }
+    }
+    return { date: cn.date, sub_total: subTotalCr, paidPortion: paidPortionCr };
   });
-  for (const { date, sub_total } of cnDetails) {
+  for (const { date, sub_total, paidPortion } of cnDetails) {
     const fy = fyLabelForDate(date) || 'other';
     byFY[fy] = (byFY[fy] || 0) - sub_total;
     total -= sub_total;
+    if (paidPortion > 0) {
+      paidByFY[fy] = (paidByFY[fy] || 0) - paidPortion;
+      paidTotal -= paidPortion;
+    }
   }
 
   for (const k of Object.keys(byFY)) byFY[k] = Math.round(byFY[k] * 100) / 100;
