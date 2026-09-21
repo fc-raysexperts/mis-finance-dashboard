@@ -61,6 +61,7 @@ async function checkPendingNewParks() {
 export default async function handler(req, res) {
   const startTime = Date.now();
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); // browsers can silently serve a stale cached GET here otherwise (confirmed via DevTools on obInvoiced.js)
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();

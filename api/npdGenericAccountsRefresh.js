@@ -20,6 +20,7 @@ const ACCOUNT_KEY_MAP = { cwip: 'Capital Work in Progress', iaud: 'Intangible As
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); // browsers can silently serve a stale cached GET here otherwise (confirmed via DevTools on obInvoiced.js)
   try {
     const accountParam = (req.query.account || '').toLowerCase();
     const accountName = ACCOUNT_KEY_MAP[accountParam];

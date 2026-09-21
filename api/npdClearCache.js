@@ -2,6 +2,7 @@ import { getRedis, PARK_KEYWORDS } from './_npdShared.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); // browsers can silently serve a stale cached GET here otherwise (confirmed via DevTools on obInvoiced.js)
   const redis = await getRedis();
   if (!redis) return res.status(500).json({ error: 'Redis not configured' });
 

@@ -253,6 +253,12 @@ async function handleStatus(req, res) {
 // ── dispatch ─────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  // Without this, browsers can — and, as confirmed via DevTools, actually do
+  // — serve a stale cached copy of these responses (HTTP 304) instead of
+  // hitting this handler's real logic at all. Every mode here reflects
+  // live-ish, Redis-backed state that changes over time, so none of it is
+  // ever safe to cache client-side.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   const mode = req.query?.mode || 'status';
   switch (mode) {
     case 'daily': return handleDaily(req, res);

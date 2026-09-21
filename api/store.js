@@ -26,6 +26,12 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // Same reasoning as obInvoiced.js: without this, browsers can serve a
+  // stale cached GET response (confirmed via DevTools — HTTP 304) instead
+  // of the real current value. This key-value store backs both the live
+  // P&L cache and the editable Outlook data, so a stale read here means a
+  // stale dashboard, silently.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const redis = await getRedis();

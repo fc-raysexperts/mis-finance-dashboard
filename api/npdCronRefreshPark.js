@@ -18,6 +18,7 @@ async function fetchBillDetailCached(H, ORG, billId) {
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); // browsers can silently serve a stale cached GET here otherwise (confirmed via DevTools on obInvoiced.js)
   const { park } = req.query;
 
   // Vercel automatically sends "Authorization: Bearer <CRON_SECRET>" on
