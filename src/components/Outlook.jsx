@@ -12,38 +12,116 @@ export default function Outlook({ curFY }) {
   const [inv, setInv] = useState(DEFAULTS);
   useEffect(() => { loadInvestorData().then(setInv); }, []);
 
-  // Invoiced Amount / Status — self-healing on the backend (see
-  // obInvoiced.js, mode=status): fast from cache when warm, computed live on a
-  // cache miss. Fetched here in 4 chunks matching the same 10-project
-  // grouping the crons use, run in parallel, each merged in as it resolves
-  // — so if some projects are cold (slow) and others are warm (instant),
-  // the warm ones show up right away instead of everything waiting on the
-  // slowest chunk, and a chunk that errors never blanks out data another
-  // chunk already delivered. invoicedLoading/invoicedBatchesDone drive the
-  // same visible loading banner pattern as the NPD tab's Summary load —
-  // shown while any batch is still in flight, gone once all 4 finish.
+  // Invoiced Amount / Status — two-stage load, same "old data stays visible"
+  // pattern as the NPD tab. Stage 1 (mode=peek, one fast call, cache-only,
+  // never touches Zoho): shows whatever was last computed — even
+  // yesterday's — the instant the tab opens, no waiting on '—'. Stage 2
+  // (mode=status, 8 batches of 5 projects each — matching the table's own
+  // S.No. order, since OB_PROJECT_MAP's order already matches it): quietly
+  // self-heals anything missing or due for refresh in the background,
+  // merging in as each batch resolves.
+  //
+  // Batches run strictly one at a time, in order — never concurrently, since
+  // that would put just as much simultaneous load on Zoho as the old
+  // 10-per-batch setup did. Retries follow a genuine two-pass shape: Pass 1
+  // attempts every batch once, in order; any that failed are only retried
+  // in Pass 2, after Pass 1 has finished all 8. That gap in real time is the
+  // point — the likely failure cause here is transient Zoho rate-limiting or
+  // a timeout under load, and retrying the same batch back-to-back with zero
+  // gap just hits the same condition again. A batch that still fails after
+  // its Pass 2 retry is simply skipped — it never blanks out what Stage 1 or
+  // another batch already delivered.
+  const TOTAL_BATCHES = 8;
   const [invoiced, setInvoiced] = useState({});
   const [invoicedLoading, setInvoicedLoading] = useState(true);
   const [invoicedBatchesDone, setInvoicedBatchesDone] = useState(0);
+  const [invoicedRetrying, setInvoicedRetrying] = useState(0); // batches left in the retry pass
+  const [obRefreshing, setObRefreshing] = useState(false);
+  const [obRefreshDone, setObRefreshDone] = useState(0);
+  const [obRefreshRetrying, setObRefreshRetrying] = useState(0);
+
+  async function fetchJsonOnce(url) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch { return null; }
+  }
+
+  // Runs batches 1..TOTAL_BATCHES through urlFor(batch) in two passes as
+  // described above. onResult(batch, data, isRetryPass) fires once per
+  // batch per pass it's actually attempted in — data is null if that
+  // attempt failed. isCancelled() is checked before every single fetch so
+  // an unmount (tab switch) stops promptly instead of finishing in the void.
+  async function runTwoPassSequential(urlFor, onResult, isCancelled, onPassOneDone, onRetryProgress) {
+    const failed = [];
+    for (let batch = 1; batch <= TOTAL_BATCHES; batch++) {
+      if (isCancelled()) return;
+      const d = await fetchJsonOnce(urlFor(batch));
+      if (d === null) failed.push(batch);
+      onResult(batch, d, false);
+    }
+    if (onPassOneDone) onPassOneDone(failed.length);
+    for (const batch of failed) {
+      if (isCancelled()) return;
+      const d = await fetchJsonOnce(urlFor(batch));
+      onResult(batch, d, true);
+      if (onRetryProgress) onRetryProgress();
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    let doneCount = 0;
-    const TOTAL_BATCHES = 4;
-    for (let batch = 1; batch <= TOTAL_BATCHES; batch++) {
-      fetch(`/api/obInvoiced?mode=status&batch=${batch}`)
-        .then(r => r.json())
-        .then(d => { if (!cancelled) setInvoiced(prev => ({ ...prev, ...(d.invoiced || {}) })); })
-        .catch(() => { /* this chunk failed — leave whatever's already loaded alone */ })
-        .finally(() => {
-          if (cancelled) return;
-          doneCount++;
-          setInvoicedBatchesDone(doneCount);
-          if (doneCount >= TOTAL_BATCHES) setInvoicedLoading(false);
-        });
-    }
+
+    // Stage 1 — instant, cache-only, no Zoho calls
+    fetch('/api/obInvoiced?mode=peek')
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setInvoiced(prev => ({ ...prev, ...(d.invoiced || {}) })); })
+      .catch(() => { /* Stage 2 below will still fill things in */ });
+
+    // Stage 2 — two-pass sequential self-heal (see comment above)
+    runTwoPassSequential(
+      batch => `/api/obInvoiced?mode=status&batch=${batch}`,
+      (batch, d, isRetryPass) => {
+        if (cancelled) return;
+        if (d?.invoiced) setInvoiced(prev => ({ ...prev, ...d.invoiced }));
+        if (!isRetryPass) setInvoicedBatchesDone(done => done + 1); // count each batch once, not again on its retry
+      },
+      () => cancelled,
+      (failedCount) => { if (!cancelled) { setInvoicedRetrying(failedCount); if (failedCount === 0) setInvoicedLoading(false); } },
+      () => { if (!cancelled) setInvoicedRetrying(n => { const next = n - 1; if (next <= 0) setInvoicedLoading(false); return next; }); }
+    );
+
     return () => { cancelled = true; };
   }, []);
   const invoicedFor = (projectId) => invoiced?.[projectId] || null;
+
+  // "Refresh OB Data" — a genuine live pull from Zoho for every project,
+  // same semantics as the global "Refresh Live Data" button (bypasses
+  // cache entirely) but scoped to just this table: mode=monthly&force=1,
+  // the same force-finalization path the monthly cron uses. Same two-pass
+  // sequential shape as Stage 2 above, for the same reason. mode=monthly
+  // doesn't return the full invoiced shape itself, so a final mode=peek
+  // pulls the freshly-written cache back in once every batch (including
+  // retries) has finished.
+  async function refreshObData() {
+    setObRefreshing(true);
+    setObRefreshDone(0);
+    setObRefreshRetrying(0);
+    await runTwoPassSequential(
+      batch => `/api/obInvoiced?mode=monthly&batch=${batch}&force=1`,
+      (batch, d, isRetryPass) => { if (!isRetryPass) setObRefreshDone(done => done + 1); }, // count each batch once, not again on its retry
+      () => false,
+      (failedCount) => setObRefreshRetrying(failedCount),
+      () => setObRefreshRetrying(n => n - 1)
+    );
+    try {
+      const r = await fetch('/api/obInvoiced?mode=peek');
+      const d = await r.json();
+      setInvoiced(prev => ({ ...prev, ...(d.invoiced || {}) }));
+    } catch { /* the per-batch cache writes already happened regardless */ }
+    setObRefreshing(false);
+  }
 
   const revD = getRevData(curFY);
   const expD = getExpData(curFY);
@@ -158,6 +236,13 @@ export default function Outlook({ curFY }) {
       <div className="investor-header-bar">
         <span className="cmp-main-title">Order Book &amp; Outlook</span>
         <div className="cmp-selector-wrap">
+          <button className="edit-btn" onClick={refreshObData} disabled={obRefreshing}>
+            {obRefreshing
+              ? (obRefreshDone >= TOTAL_BATCHES
+                  ? `↻ Retrying ${obRefreshRetrying} failed batch${obRefreshRetrying === 1 ? '' : 'es'}…`
+                  : `↻ Refreshing… ${obRefreshDone}/${TOTAL_BATCHES}`)
+              : '↻ Refresh OB Data'}
+          </button>
           {!editMode
             ? <button className="edit-btn" onClick={() => setEditMode(true)}>✎ Edit Outlook Data</button>
             : <button className="edit-btn edit-btn-save" onClick={handleSave}>💾 Save All</button>}
@@ -166,19 +251,24 @@ export default function Outlook({ curFY }) {
 
       {/* ═══ ORDER BOOK SECTIONS FIRST ═══ */}
 
-      {/* Same visible-loading pattern as the NPD tab's Summary load: a
-          banner with a spinner while any of the 4 Invoiced Amount batches
-          are still in flight, gone the instant all 4 finish. Placed above
-          both Live Order Book and the table below it, since several of
-          Live Order Book's own cells (Current Order Book, Order Book
-          Current Revenue, etc.) depend on this same data. On a cold day
-          (first visit since the last cache reset) this can show for a
-          couple of minutes while obInvoiced.js (mode=status) computes live; on a
-          warm day it disappears almost immediately. */}
-      {invoicedLoading && (
+      {/* Non-blocking now — Stage 1 (mode=peek) already populated whatever
+          was cached the instant the tab opened, so this banner just means
+          "still quietly checking/updating in the background", not "nothing
+          is visible yet". Gone once all 8 self-heal batches finish. */}
+      {invoicedLoading && !obRefreshing && (
         <div className="npd-loading">
           <span className="npd-spinner" />
-          {` Loading today's Invoiced Amount data — ${invoicedBatchesDone}/4 batches done (only slow on the first visit of the day; instant after that until tomorrow)…`}
+          {invoicedBatchesDone >= TOTAL_BATCHES
+            ? ` Retrying ${invoicedRetrying} batch${invoicedRetrying === 1 ? '' : 'es'} that didn't load the first time — figures already shown stay visible while this finishes…`
+            : ` Updating today's Invoiced Amount data in the background — ${invoicedBatchesDone}/${TOTAL_BATCHES} batches done (figures already shown stay visible while this finishes)…`}
+        </div>
+      )}
+      {obRefreshing && (
+        <div className="npd-loading">
+          <span className="npd-spinner" />
+          {obRefreshDone >= TOTAL_BATCHES
+            ? ` Retrying ${obRefreshRetrying} batch${obRefreshRetrying === 1 ? '' : 'es'} that didn't load the first time…`
+            : ` Refreshing Order Book data live from Zoho — ${obRefreshDone}/${TOTAL_BATCHES} batches done…`}
         </div>
       )}
 

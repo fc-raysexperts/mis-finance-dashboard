@@ -10,7 +10,10 @@ import { OB_PROJECT_MAP, computeInvoicedForProject, mergeStableAndRecent, sixMon
 //   ?mode=monthly&batch=N  — cron, full finalization (was obInvoicedMonthlyReload.js)
 //   ?mode=one&client=X (or &projectId=X) — on-demand single project (was obInvoicedRefreshOne.js)
 //   ?mode=status&batch=N   — frontend read, self-healing (was obInvoicedStatus.js) — default if mode omitted
-const BATCH_SIZE = 10;
+//   ?mode=peek             — frontend read, cache-only, never calls Zoho — all projects in one fast call,
+//                            for showing yesterday's (or last-computed) figures instantly on tab open
+//                            while mode=status quietly self-heals/updates in the background
+const BATCH_SIZE = 5;
 
 function requireCronAuth(req, res) {
   const authHeader = req.headers['authorization'];
@@ -202,6 +205,22 @@ async function getOrCompute(H, ORG, redis, projectId) {
   return mergeStableAndRecent(stable, recent);
 }
 
+async function handlePeek(req, res) {
+  const redis = await getRedis();
+  const entries = [];
+  const isCurrentShape = (d) => d && 'paidByFY' in d;
+  for (const { projectId } of OB_PROJECT_MAP) {
+    let stable = null, recent = null;
+    if (redis) {
+      try { [stable, recent] = await Promise.all([redis.get(`ob:cache:stable:${projectId}`), redis.get(`ob:cache:recent:${projectId}`)]); }
+      catch { /* leave both null — treat as never-computed for this project */ }
+    }
+    if (!isCurrentShape(stable)) { entries.push([projectId, null]); continue; }
+    entries.push([projectId, isCurrentShape(recent) ? mergeStableAndRecent(stable, recent) : mergeStableAndRecent(stable, null)]);
+  }
+  return res.status(200).json({ invoiced: Object.fromEntries(entries) });
+}
+
 async function handleStatus(req, res) {
   const redis = await getRedis();
   const auth = await getZohoAuth();
@@ -240,6 +259,7 @@ export default async function handler(req, res) {
     case 'monthly': return handleMonthly(req, res);
     case 'one': return handleOne(req, res);
     case 'status': return handleStatus(req, res);
+    case 'peek': return handlePeek(req, res);
     default: return res.status(400).json({ error: `Unknown mode "${mode}" — expected daily, monthly, one, or status` });
   }
 }
