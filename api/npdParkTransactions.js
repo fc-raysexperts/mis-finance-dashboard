@@ -2,7 +2,7 @@ import { getAccessToken } from './_tokenCache.js';
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS, MANUALLY_EXCLUDED_FROM_PARK, sleep,
   classify, classifyFlatAccount, matchParkProjects, computeTransactionAmount,
-  getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
+  getRedis, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
   processBatched, resolvePeriod, derivePeriodFromFullData,
 } from './_npdShared.js';
@@ -344,7 +344,7 @@ export default async function handler(req, res) {
       transactions: allTxns, cached_at: new Date().toISOString(),
     };
     if (cacheRedis) {
-      try { await cacheRedis.set(`npd:cache:park_full:${park}:Total Till Date`, fullTotalObject, { ex: getSecondsUntilNext6AMIST() }); } catch { /* non-fatal */ }
+      try { await cacheRedis.set(`npd:cache:park_full:${park}:Total Till Date`, fullTotalObject); } catch { /* non-fatal — no expiry: replaced by the next scheduled run */ }
       try { await cacheRedis.set(`npd:cache:park_lastknown:${park}:Total Till Date`, fullTotalObject, { ex: 7 * 24 * 3600 }); } catch { /* non-fatal */ }
     }
 
@@ -375,8 +375,10 @@ export default async function handler(req, res) {
         cb_category_totals: cbCategoryTotals,
         cached_at: new Date().toISOString(),
       };
+      // Period views are NOT saved separately any more: they are always derived
+      // from the Total copy (see the top of this handler), so they can never
+      // lag behind a fresh Total now that saved copies no longer expire.
       if (cacheRedis) {
-        try { await cacheRedis.set(`npd:cache:park_full:${park}:${periodLabel}`, derivedResult, { ex: getSecondsUntilNext6AMIST() }); } catch { /* non-fatal */ }
         try { await cacheRedis.set(`npd:cache:park_lastknown:${park}:${periodLabel}`, derivedResult, { ex: 7 * 24 * 3600 }); } catch { /* non-fatal */ }
       }
       return res.status(200).json({

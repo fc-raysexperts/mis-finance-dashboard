@@ -1,4 +1,4 @@
-import { getRedis, getSecondsUntilNext6AMIST, getZohoAuth, ZohoRateLimitError } from './_npdShared.js';
+import { getRedis, getZohoAuth, ZohoRateLimitError } from './_npdShared.js';
 import { OB_PROJECT_MAP, computeInvoicedForProject, mergeStableAndRecent, sixMonthsAgoISO, TENTATIVE_MATCHES } from './_obShared.js';
 
 // Consolidated from 4 separate files (obInvoicedRefreshBatch.js,
@@ -6,20 +6,24 @@ import { OB_PROJECT_MAP, computeInvoicedForProject, mergeStableAndRecent, sixMon
 // into this one, dispatched by ?mode= — purely to stay under Vercel's
 // Hobby-plan cap of 12 serverless functions per deployment; each mode's
 // logic below is otherwise unchanged from its original file. Modes:
-//   ?mode=daily&batch=N    — cron, recent-only (was obInvoicedRefreshBatch.js)
-//   ?mode=monthly&batch=N  — cron, full finalization (was obInvoicedMonthlyReload.js)
+//   ?mode=daily&batch=N    — scheduled (GitHub Actions), recent-only (was obInvoicedRefreshBatch.js)
+//   ?mode=monthly&batch=N  — scheduled (GitHub Actions), full finalization (was obInvoicedMonthlyReload.js)
 //   ?mode=one&client=X (or &projectId=X) — on-demand single project (was obInvoicedRefreshOne.js)
 //   ?mode=status&batch=N   — frontend read, self-healing (was obInvoicedStatus.js) — default if mode omitted
 //   ?mode=peek             — frontend read, cache-only, never calls Zoho — all projects in one fast call,
 //                            for showing yesterday's (or last-computed) figures instantly on tab open
 //                            while mode=status quietly self-heals/updates in the background
+//
+// CACHE RULE: nothing saved here expires. Each project's saved figures stay on
+// screen until the scheduled run has fully recomputed that project and
+// overwrites them in one write.
 const BATCH_SIZE = 5;
 
 function requireCronAuth(req, res) {
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    res.status(401).json({ error: 'Unauthorized — this endpoint is meant to be triggered by Vercel Cron only' });
+    res.status(401).json({ error: 'Unauthorized — this endpoint is meant to be triggered by the scheduled refresh job only' });
     return false;
   }
   return true;
@@ -58,7 +62,7 @@ async function handleDaily(req, res) {
       const data = await computeInvoicedForProject(H, ORG, projectId, sinceDate);
       completed.push({ client, since: sinceDate, total: data.total, invoice_count: data.invoice_count, creditnote_count: data.creditnote_count });
       if (redis) {
-        try { await redis.set(`ob:cache:recent:${projectId}`, data, { ex: getSecondsUntilNext6AMIST() + 3600 }); }
+        try { await redis.set(`ob:cache:recent:${projectId}`, data); }
         catch (e) { errors.push({ client, stage: 'cache_write', error: e.message }); }
       }
     } catch (err) {
@@ -97,7 +101,6 @@ async function handleMonthly(req, res) {
   const { H, ORG } = auth;
   const redis = await getRedis();
   const today = new Date().toISOString().slice(0, 10);
-  const STABLE_TTL = getSecondsUntilNext6AMIST() + 3600 * 24 * 40;
 
   const startTime = Date.now();
   const completed = [];
@@ -108,8 +111,8 @@ async function handleMonthly(req, res) {
       completed.push({ client, total: data.total, invoice_count: data.invoice_count, creditnote_count: data.creditnote_count });
       if (redis) {
         try {
-          await redis.set(`ob:cache:stable:${projectId}`, data, { ex: STABLE_TTL });
-          await redis.set(`ob:cache:stableCutoff:${projectId}`, today, { ex: STABLE_TTL });
+          await redis.set(`ob:cache:stable:${projectId}`, data);
+          await redis.set(`ob:cache:stableCutoff:${projectId}`, today);
           await redis.del(`ob:cache:recent:${projectId}`);
         } catch (e) { errors.push({ client, stage: 'cache_write', error: e.message }); }
       }
@@ -152,13 +155,12 @@ async function handleOne(req, res) {
   const { H, ORG } = auth;
   const redis = await getRedis();
   const today = new Date().toISOString().slice(0, 10);
-  const STABLE_TTL = getSecondsUntilNext6AMIST() + 3600 * 24 * 40;
 
   const data = await computeInvoicedForProject(H, ORG, entry.projectId, null);
 
   if (redis) {
-    await redis.set(`ob:cache:stable:${entry.projectId}`, data, { ex: STABLE_TTL });
-    await redis.set(`ob:cache:stableCutoff:${entry.projectId}`, today, { ex: STABLE_TTL });
+    await redis.set(`ob:cache:stable:${entry.projectId}`, data);
+    await redis.set(`ob:cache:stableCutoff:${entry.projectId}`, today);
     await redis.del(`ob:cache:recent:${entry.projectId}`);
   }
 
@@ -183,10 +185,9 @@ async function getOrCompute(H, ORG, redis, projectId) {
     const today = new Date().toISOString().slice(0, 10);
     const data = await computeInvoicedForProject(H, ORG, projectId, null);
     if (redis) {
-      const ttl = getSecondsUntilNext6AMIST() + 3600 * 24 * 40;
       try {
-        await redis.set(`ob:cache:stable:${projectId}`, data, { ex: ttl });
-        await redis.set(`ob:cache:stableCutoff:${projectId}`, today, { ex: ttl });
+        await redis.set(`ob:cache:stable:${projectId}`, data);
+        await redis.set(`ob:cache:stableCutoff:${projectId}`, today);
         await redis.del(`ob:cache:recent:${projectId}`);
       } catch { /* non-fatal — still return the freshly computed value below */ }
     }
@@ -198,7 +199,7 @@ async function getOrCompute(H, ORG, redis, projectId) {
     if (redis) { try { cutoff = await redis.get(`ob:cache:stableCutoff:${projectId}`); } catch { /* fall through */ } }
     const sinceDate = cutoff || sixMonthsAgoISO();
     const data = await computeInvoicedForProject(H, ORG, projectId, sinceDate);
-    if (redis) { try { await redis.set(`ob:cache:recent:${projectId}`, data, { ex: getSecondsUntilNext6AMIST() + 3600 }); } catch { /* non-fatal */ } }
+    if (redis) { try { await redis.set(`ob:cache:recent:${projectId}`, data); } catch { /* non-fatal */ } }
     return mergeStableAndRecent(stable, data);
   }
 

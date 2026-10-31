@@ -1,22 +1,11 @@
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, sleep,
   classify, classifyFlatAccount, matchParkProjects,
-  getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
+  getRedis, fetchZohoJson, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
+  fetchBillDetailCached,
   processBatched, resolvePeriod, getZohoAuth, derivePeriodFromFullData,
 } from './_npdShared.js';
-
-async function fetchBillDetailCached(H, ORG, billId) {
-  const redis = await getRedis();
-  const cacheKey = `npd:cache:bill_detail:${billId}`;
-  if (redis) {
-    try { const c = await redis.get(cacheKey); if (c) return c; } catch { /* fall through */ }
-  }
-  const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, H);
-  const lineItems = dd.bill?.line_items || [];
-  if (redis) { try { await redis.set(cacheKey, lineItems, { ex: getSecondsUntilNext6AMIST() * 7 }); } catch { /* non-fatal */ } }
-  return lineItems;
-}
 
 export default async function handler(req, res) {
   const startTime = Date.now();
@@ -198,7 +187,8 @@ export default async function handler(req, res) {
       // Cache the FULL result (including transactions) so Park Detail can
       // read it instantly instead of recomputing. Period-aware key, since
       // results differ by period.
-      if (redis) {
+      // Only the Total copy is saved (no expiry); period views are derived from it.
+      if (redis && periodLabel === 'Total Till Date') {
         try {
           await redis.set(`npd:cache:park_full:${park}:${periodLabel}`, {
             park, from_date: fromDate, to_date: toDate, period_label: periodLabel,
@@ -206,7 +196,7 @@ export default async function handler(req, res) {
             total, cwip_total: cwipTotal, iaud_total: iaudTotal,
             category_totals: categoryTotals, unclassified_count: unclassifiedCount,
             transactions: allTxns, cached_at: new Date().toISOString(),
-          }, { ex: getSecondsUntilNext6AMIST() });
+          });
         } catch { /* non-fatal — summary still returns correctly even if this write fails */ }
       }
     }

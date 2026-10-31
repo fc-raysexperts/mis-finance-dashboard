@@ -1,41 +1,45 @@
 import {
   PARK_KEYWORDS, NON_NPD_ACCOUNT_TYPES, MANUALLY_EXCLUDED_ACCOUNTS, MANUALLY_EXCLUDED_BILLS, MANUALLY_EXCLUDED_FROM_PARK,
   classify, classifyFlatAccount, matchParkProjects, computeTransactionAmount,
-  getRedis, getSecondsUntilNext6AMIST, fetchZohoJson, ZohoRateLimitError,
+  getRedis, ZohoRateLimitError,
   fetchAllAccounts, fetchAllGlAccounts, fetchAllProjects, fetchAccountTransactions, fetchProjectBills,
+  fetchBillDetailCached, RECENT_BILL_DAYS, daysAgoISO,
   processBatched, getZohoAuth,
 } from './_npdShared.js';
-
-async function fetchBillDetailCached(H, ORG, billId) {
-  const redis = await getRedis();
-  const cacheKey = `npd:cache:bill_detail:${billId}`;
-  if (redis) { try { const c = await redis.get(cacheKey); if (c) return c; } catch { /* fall through */ } }
-  const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, H);
-  const lineItems = dd.bill?.line_items || [];
-  if (redis) { try { await redis.set(cacheKey, lineItems, { ex: getSecondsUntilNext6AMIST() * 7 }); } catch { /* non-fatal — bill contents are stable, a week's cache is safe */ } }
-  return lineItems;
-}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); // browsers can silently serve a stale cached GET here otherwise (confirmed via DevTools on obInvoiced.js)
   const { park } = req.query;
 
-  // Vercel automatically sends "Authorization: Bearer <CRON_SECRET>" on
-  // every real cron invocation, once CRON_SECRET is set in your Vercel env
-  // vars (Project Settings → Environment Variables). This is Vercel's own
-  // mechanism, not something we invented — verified against current docs.
+  // The scheduled refresh (GitHub Actions → scripts/scheduledRefresh.mjs)
+  // sends "Authorization: Bearer <CRON_SECRET>" on every call; the same
+  // CRON_SECRET value must be set in the Vercel project's environment
+  // variables and in the GitHub repo's secrets.
   // Manual/local testing (no CRON_SECRET set) runs unprotected.
+//
+// ?full=1 (FULL run, 4th Saturday or by hand): every project bill is opened again.
+// Without it (NIGHTLY): a project bill is opened only if it has no saved line
+// items yet or is dated within the last RECENT_BILL_DAYS days. Account
+// transactions and project bill lists are read in full every night either way.
+// A full run stops re-opening OLD bills after FULL_REFRESH_BUDGET_MS so a very
+// large park can never run into Vercel's 300-second limit (the rest reuse their
+// saved line items; the response says so in bill_refresh_budget_hit).
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return res.status(401).json({ error: 'Unauthorized — this endpoint is meant to be triggered by Vercel Cron only' });
+    return res.status(401).json({ error: 'Unauthorized — this endpoint is meant to be triggered by the scheduled refresh job only' });
   }
   if (!park || !PARK_KEYWORDS[park]) {
     return res.status(400).json({ error: 'park is required and must be a known park name', valid_parks: Object.keys(PARK_KEYWORDS) });
   }
 
   const startTime = Date.now();
+  const full = req.query.full === '1';
+  const recentFrom = daysAgoISO(RECENT_BILL_DAYS);
+  const billStats = { opened: 0, reused: 0 };
+  const fullRefreshBudgetMs = Number(process.env.NPD_FULL_REFRESH_BUDGET_MS ?? 230_000);
+  let budgetHit = false;
   const auth = await getZohoAuth();
   if (auth.error) return res.status(500).json({ error: 'Token failed', detail: auth.error });
   const { H, ORG } = auth;
@@ -110,8 +114,11 @@ export default async function handler(req, res) {
     for (const entry of allNewBills) uniqueBillsById.set(entry.bill.bill_id, entry);
     allNewBills = [...uniqueBillsById.values()];
 
+    let openedBefore = 0;
     const billResults = await processBatched(allNewBills, 3, 1600, async ({ bill: b, projectName }) => {
-      const lineItems = await fetchBillDetailCached(H, ORG, b.bill_id);
+      let refresh = ((b.txn_value_date || b.date) || '') >= recentFrom; // recent bills are always opened again
+      if (full && !refresh) { if (Date.now() - startTime < fullRefreshBudgetMs) refresh = true; else budgetHit = true; }
+      const lineItems = await fetchBillDetailCached(H, ORG, b.bill_id, { refresh, stats: billStats });
       if (lineItems.length === 0) {
         return [{ date: b.txn_value_date || b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: projectName, account_name: null, category: 'Unclassified', head_grouping: 'Unclassified', source: 'project_tagged_bill_supplemental', amount: parseFloat(b.total) || 0 }];
       }
@@ -123,7 +130,7 @@ export default async function handler(req, res) {
         const cls = classifyFlatAccount(li.account_name, customClassifications);
         return { date: b.txn_value_date || b.date, vendor: b.vendor_name || '', transaction_type: 'bill', bill_number: b.bill_number, branch: null, project_name: li.project_name || projectName, account_name: li.account_name || null, category: cls.category, head_grouping: cls.head_grouping, source: 'project_tagged_bill_supplemental', amount: parseFloat(li.item_total) || 0 };
       });
-    });
+    }, () => { const calledZoho = billStats.opened !== openedBefore; openedBefore = billStats.opened; return calledZoho; });
     allTxns = allTxns.concat(billResults.flat());
 
     // Channel 3 — read-only here, same reasoning as npdParkTransactions.js.
@@ -161,12 +168,32 @@ export default async function handler(req, res) {
       refreshed_at: new Date().toISOString(),
     };
 
+    let saved = false;
     if (redis) {
-      try { await redis.set(`npd:cache:park_full:${park}:Total Till Date`, result, { ex: getSecondsUntilNext6AMIST() + 3600 }); } // small buffer past next 6am in case cron runs a bit late
+      // No expiry: this complete, fresh copy replaces the old one in a single
+      // write, and stays until tomorrow's scheduled run replaces it in turn.
+      try { await redis.set(`npd:cache:park_full:${park}:Total Till Date`, result); saved = true; }
       catch { /* non-fatal — endpoint still returns the fresh result even if caching fails */ }
+      // Period views (FY, quarter, month) are derived on request from the Total
+      // copy, so they can never lag behind it. Remove any older period copies
+      // left over from before this change.
+      if (saved) {
+        try {
+          let cursor = 0, rounds = 0;
+          do {
+            const [next, keys] = await redis.scan(cursor, { match: `npd:cache:park_full:${park}:*`, count: 500 });
+            const stale = keys.filter(k => !k.endsWith(':Total Till Date'));
+            if (stale.length) await redis.del(...stale);
+            cursor = Number(next); rounds++;
+          } while (cursor !== 0 && rounds < 40);
+        } catch { /* non-fatal */ }
+      }
     }
 
-    return res.status(200).json({ ...result, cron_response_time_ms: Date.now() - startTime, cached: !!redis });
+    return res.status(200).json({
+      ...result, cron_response_time_ms: Date.now() - startTime, cached: saved,
+      mode: full ? 'full' : 'nightly', bill_details_opened: billStats.opened, bill_details_reused: billStats.reused, bill_refresh_budget_hit: budgetHit,
+    });
   } catch (err) {
     if (err instanceof ZohoRateLimitError) {
       return res.status(429).json({ error: 'RATE_LIMITED', message: err.message, park });

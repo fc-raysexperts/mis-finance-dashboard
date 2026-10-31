@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import FinTable from './components/FinTable.jsx';
 import MonthlyPL from './components/MonthlyPL.jsx';
 import Comparison from './components/Comparison.jsx';
@@ -8,11 +8,17 @@ import SolarParks from './components/SolarParks.jsx';
 import Manufacturing from './components/Manufacturing.jsx';
 import UKArin from './components/UKArin.jsx';
 import NPD from './components/NPD.jsx';
-import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveCache } from './data/dataService.js';
+import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveCache, liveCacheNeedsSelfHeal } from './data/dataService.js';
 import { FY_CONFIG, REV_STRUCTURE, EXP_STRUCTURE } from './data/structure.js';
 import { downloadFYSheet, downloadComparisonSheet } from './excelExport.js';
 
-const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Order Book & Outlook', 'Solar Parks', 'Manufacturing', 'UK - Arin Power', 'New Park Development'];
+// Financial Projections is loaded only when its tab is opened (it carries the whole model as static data).
+const FinancialProjections = lazy(() => import('./components/FinancialProjections.jsx'));
+
+const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Order Book & Outlook', 'New Park Development', 'More Details', 'Financial Projections'];
+const MORE_DETAILS_TAB = 7;
+const FP_TAB = 8;
+const MORE_SUBTABS = ['Solar Parks', 'Manufacturing', 'UK - Arin Power'];
 
 function ChartIcon() {
   return (
@@ -34,6 +40,7 @@ function ChartIcon() {
 export default function App() {
   const [curFY, setCurFY]       = useState('FY26');
   const [curTab, setCurTab]     = useState(0);
+  const [moreSub, setMoreSub]   = useState(0); // More Details sub-tab, 0 = Solar Parks (default)
   const [loading, setLoading]   = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -66,10 +73,12 @@ export default function App() {
       setHydrating(false);
       forceUpdate(n => n + 1);
 
-      // 2. Only hit the Zoho Books API loop in the background if the cached
-      //    data is missing or from a previous day — most visits won't need this.
-      const today = new Date().toDateString();
-      if (!cached || cached.toDateString() !== today) {
+      // 2. The saved figures are refreshed every night by the scheduled run
+      //    (1:17 AM IST, with a second chance at 3:17 AM) and never expire. The browser only fetches live as a
+      //    safety net: nothing saved yet, or the saved copy is from an earlier
+      //    IST day and it is already past 5:00 AM IST (so the night run and its
+      //    second-chance run at 3:17 AM both failed).
+      if (liveCacheNeedsSelfHeal(cached)) {
         doRefresh();
       }
     })();
@@ -108,7 +117,7 @@ export default function App() {
               <span className="app-sub">Rays Power Experts</span>
             </div>
           </div>
-          <div className="header-center">
+          {curTab !== FP_TAB && <div className="header-center">
             <div className="fy-seg">
               {FY_CONFIG.map(f => (
                 <button key={f.id} className={`fy-btn${curFY === f.id ? ' active' : ''}`}
@@ -122,7 +131,7 @@ export default function App() {
               onClick={doRefresh} disabled={loading}>
               <span className="refresh-icon">↻</span>{refreshLabel}
             </button>
-          </div>
+          </div>}
           <div className="header-right">
             <span className="dev-credit-name">Finance Control Team</span>
             <button className="credits-btn" onClick={() => setShowCredits(true)}>Credits</button>
@@ -135,6 +144,15 @@ export default function App() {
               onClick={() => setCurTab(i)}>{t}</button>
           ))}
         </nav>
+
+        {curTab === MORE_DETAILS_TAB && (
+          <nav className="subtab-nav" aria-label="More Details sections">
+            {MORE_SUBTABS.map((t, i) => (
+              <button key={t} className={`subtab-btn${moreSub === i ? ' active' : ''}`}
+                onClick={() => setMoreSub(i)}>{t}</button>
+            ))}
+          </nav>
+        )}
       </div>
 
       {liveError && (
@@ -148,10 +166,15 @@ export default function App() {
         {curTab === 3 && <Comparison selOption={cmpOption} setSelOption={setCmpOption} />}
         {curTab === 4 && <InvestorSummary curFY={curFY} />}
         {curTab === 5 && <Outlook curFY={curFY} />}
-        {curTab === 6 && <SolarParks />}
-        {curTab === 7 && <Manufacturing />}
-        {curTab === 8 && <UKArin />}
-        {curTab === 9 && <NPD />}
+        {curTab === 6 && <NPD />}
+        {curTab === MORE_DETAILS_TAB && moreSub === 0 && <SolarParks />}
+        {curTab === MORE_DETAILS_TAB && moreSub === 1 && <Manufacturing />}
+        {curTab === MORE_DETAILS_TAB && moreSub === 2 && <UKArin />}
+        {curTab === FP_TAB && (
+          <Suspense fallback={<div className="fp-loading">Loading Financial Projections…</div>}>
+            <FinancialProjections />
+          </Suspense>
+        )}
       </main>
 
       <footer className="app-footer">

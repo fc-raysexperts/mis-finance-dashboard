@@ -17,6 +17,27 @@ const LIVE_CACHE_KEY = 'live_cache_v1';
 
 export function getLastRefreshed() { return lastRefreshed; }
 
+// ── "Day" = starts at 12:00 AM IST ─────────────────────────────────────────
+// The saved P&L figures are refreshed every night by the scheduled run
+// (GitHub Actions, 1:17 AM IST - see .github/workflows/scheduled-refresh.yml).
+// They never expire; a browser only steps in as a SAFETY NET when the saved
+// copy is from an earlier IST day AND the night run should long be over
+// (5:00 AM IST: the nightly job starts 1:17 AM and its second-chance run 3:17 AM,
+// so by 5:00 both are over), i.e. the scheduled runs must have failed.
+const IST = 'Asia/Kolkata';
+const SCHEDULED_RUN_DEADLINE_HOUR_IST = 5;
+export function istDay(date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: IST, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date); // YYYY-MM-DD
+}
+function istHour(date) {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: IST, hour: '2-digit', hourCycle: 'h23' }).format(date));
+}
+export function liveCacheNeedsSelfHeal(last, now = new Date()) {
+  if (!last) return true;                              // nothing saved yet
+  if (istDay(last) === istDay(now)) return false;      // already refreshed since 12:00 AM IST today
+  return istHour(now) >= SCHEDULED_RUN_DEADLINE_HOUR_IST; // earlier day, and the night run window is over
+}
+
 // Fetches the cached live figures from the shared backend. Safe to call
 // multiple times — only does the network round-trip once.
 export function hydrateLiveCache() {
@@ -107,20 +128,29 @@ async function fetchMonth(fyId, year, calMonth) {
   return res.json();
 }
 
-export async function refreshLiveData(onProgress) {
+// A month that fails keeps its previous saved figures (liveCache is hydrated
+// first), so a partly failed run never blanks anything.
+// opts.stampOnlyIfComplete (scheduled run): when any month failed, the figures
+// that DID refresh are saved but the "last refreshed" time is left as it was,
+// so a half-done night never looks like a finished one.
+// Returns { total, failed: ['FY27 Apr', ...], saved }.
+export async function refreshLiveData(onProgress, opts = {}) {
   const needed = getLiveMonthsNeeded();
+  const failed = [];
   let done = 0;
   for (const m of needed) {
     try {
       const result = await fetchMonth(m.fyId, m.year, m.calMonth);
       liveCache[`${m.fyId}-${m.idx}`] = result;
     } catch (e) {
+      failed.push(`${m.fyId} ${m.label}`);
       console.error(`Failed ${m.fyId} ${m.label}:`, e);
     }
     done++;
     if (onProgress) onProgress(done, needed.length);
   }
-  lastRefreshed = new Date();
+  if (failed.length === 0 || !opts.stampOnlyIfComplete) lastRefreshed = new Date();
   // Persist to the shared backend so every device sees this instantly next time
-  await setRemote(LIVE_CACHE_KEY, { cache: liveCache, lastRefreshed: lastRefreshed.toISOString() });
+  const saved = await setRemote(LIVE_CACHE_KEY, { cache: liveCache, lastRefreshed: lastRefreshed ? lastRefreshed.toISOString() : null });
+  return { total: needed.length, failed, saved };
 }

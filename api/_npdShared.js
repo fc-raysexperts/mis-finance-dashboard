@@ -223,17 +223,35 @@ export async function getRedis() {
     return null;
   }
 }
-export const CACHE_TTL_SECONDS = 600; // fallback/legacy — see getSecondsUntilNext6AMIST for the real daily-cycle TTL
+export const CACHE_TTL_SECONDS = 600; // fallback/legacy
 
-// Seconds remaining until the next 6:00 AM IST (00:30 UTC). Used so the
-// shared caches naturally expire right when the cron refresh happens, not
-// on a fixed rolling window that would drift out of sync with it.
-export function getSecondsUntilNext6AMIST() {
-  const now = new Date();
-  const nowUTC = now.getTime();
-  const next6amUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 30, 0));
-  if (next6amUTC.getTime() <= nowUTC) next6amUTC.setUTCDate(next6amUTC.getUTCDate() + 1);
-  return Math.floor((next6amUTC.getTime() - nowUTC) / 1000);
+// CACHE RULE (changed): saved snapshots - P&L, Order Book, NPD (accounts, GL,
+// projects, generic accounts, every park's Total Till Date) - have NO expiry.
+// The last complete copy stays on screen until the next scheduled run has
+// fully computed its replacement and overwrites it. Nothing is deleted just
+// because a clock ran out, so a failed night never leaves the dashboard blank.
+//
+// The scheduled run itself lives in .github/workflows/scheduled-refresh.yml
+// (GitHub Actions) and is driven by scripts/scheduledRefresh.mjs.
+
+// NIGHTLY vs FULL (NPD only). Opening a bill to read its line items is by far
+// the most expensive thing the NPD refresh does (one Zoho call per bill, and
+// the company-wide CWIP / IAUD / land-lease accounts hold thousands of them).
+//   - NIGHTLY run: a bill is opened again only if it is new (never seen before)
+//     or dated within the last RECENT_BILL_DAYS days; every other bill reuses
+//     what was worked out for it before.
+//   - FULL run (4th Saturday of the month, or started by hand): every bill is
+//     opened again, so edits to older bills are picked up and the saved results
+//     are rebuilt from scratch.
+// The cheap parts (account transaction reports, project bill lists) are
+// re-read in full every night either way.
+export const RECENT_BILL_DAYS = 60;
+// Today's date in India (YYYY-MM-DD) - the company's books run on IST.
+export function istTodayISO() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+export function daysAgoISO(n) {
+  return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 }
 
 // ── Rate-limit-aware Zoho fetch wrapper. Zoho's OWN official API docs
@@ -267,9 +285,12 @@ export async function fetchZohoJson(url, H) {
 }
 
 // ── Cached fetch helpers ────────────────────────────────────────────────
-export async function fetchAllAccounts(H, ORG) {
+// opts.force = true (scheduled run only): skip the saved copy, fetch fresh, and
+// replace the saved copy ONLY if the new fetch looks complete. If it does not,
+// this throws and the previous snapshot stays untouched.
+export async function fetchAllAccounts(H, ORG, opts = {}) {
   const redis = await getRedis();
-  if (redis) { try { const c = await redis.get('npd:cache:coa_accounts'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
+  if (redis && !opts.force) { try { const c = await redis.get('npd:cache:coa_accounts'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
   let all = [], page = 1, lastFirstId = null;
   while (true) {
     const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/chartofaccounts?${ORG}&page=${page}&per_page=1000&filter_by=AccountType.All`, H);
@@ -287,18 +308,21 @@ export async function fetchAllAccounts(H, ORG) {
   // that the org genuinely has almost no accounts. Caching a failed fetch's
   // empty result is exactly what caused this class of bug once already.
   const looksReal = all.length >= 1000;
+  if (opts.force && !looksReal) throw new Error(`Chart of Accounts refresh returned only ${all.length} accounts (expected 3,300+) - previous saved copy kept`);
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis && looksReal) { try { await redis.set('npd:cache:coa_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  if (redis && looksReal) { try { await redis.set('npd:cache:coa_accounts', all); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
   else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
-export async function fetchAllGlAccounts(H, ORG) {
+export async function fetchAllGlAccounts(H, ORG, opts = {}) {
   const redis = await getRedis();
-  if (redis) { try { const c = await redis.get('npd:cache:gl_accounts'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
+  if (redis && !opts.force) { try { const c = await redis.get('npd:cache:gl_accounts'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
   let all = [], page = 1;
   while (true) {
-    const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/reports/generalledger?${ORG}&from_date=2020-04-01&to_date=2026-08-04&page=${page}&per_page=200`, H);
+    // The General Ledger report is only used to ask "has this account ever been debited?", so it
+    // must run up to TODAY. (It was pinned to 2026-08-04, which hid accounts first used after that.)
+    const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/reports/generalledger?${ORG}&from_date=2020-04-01&to_date=${istTodayISO()}&page=${page}&per_page=200`, H);
     if (d.code !== 0 || !d.generalledger?.length) break;
     all = all.concat(d.generalledger);
     if (!d.page_context?.has_more_page) break;
@@ -306,15 +330,16 @@ export async function fetchAllGlAccounts(H, ORG) {
     await sleep(700);
   }
   const looksReal = all.length >= 1000; // known real size ~3,700+
+  if (opts.force && !looksReal) throw new Error(`GL accounts refresh returned only ${all.length} rows (expected 3,700+) - previous saved copy kept`);
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis && looksReal) { try { await redis.set('npd:cache:gl_accounts', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  if (redis && looksReal) { try { await redis.set('npd:cache:gl_accounts', all); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
   else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
 
-export async function fetchAllProjects(H, ORG) {
+export async function fetchAllProjects(H, ORG, opts = {}) {
   const redis = await getRedis();
-  if (redis) { try { const c = await redis.get('npd:cache:projects'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
+  if (redis && !opts.force) { try { const c = await redis.get('npd:cache:projects'); if (c) return { data: c, cache_status: 'hit' }; } catch { /* fall through */ } }
   let all = [], page = 1;
   while (true) {
     const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/projects?${ORG}&page=${page}&per_page=200`, H);
@@ -325,8 +350,9 @@ export async function fetchAllProjects(H, ORG) {
     await sleep(700);
   }
   const looksReal = all.length >= 30; // known real size ~57+
+  if (opts.force && !looksReal) throw new Error(`Projects refresh returned only ${all.length} projects (expected 57+) - previous saved copy kept`);
   let writeStatus = redis ? 'not_attempted' : 'no_redis';
-  if (redis && looksReal) { try { await redis.set('npd:cache:projects', all, { ex: getSecondsUntilNext6AMIST() }); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
+  if (redis && looksReal) { try { await redis.set('npd:cache:projects', all); writeStatus = 'write_ok'; } catch (e) { writeStatus = `write_failed: ${e.message}`; } }
   else if (redis && !looksReal) writeStatus = `skipped_suspiciously_small_result_count_${all.length}`;
   return { data: all, cache_status: redis ? `miss_${writeStatus}` : 'no_redis' };
 }
@@ -382,19 +408,43 @@ export async function fetchAccountTransactionsBulk(H, ORG, accountIds, fromDate,
   return found;
 }
 
+// Line items of one bill, remembered with NO expiry. opts.refresh = true skips
+// the remembered copy and reads the bill again (used by the full run, and by the
+// nightly run for bills dated in the last RECENT_BILL_DAYS days).
+// opts.stats ({ opened, reused }) is filled in for the run summary.
+// A reply that does not contain the bill (error, odd response) is NOT remembered,
+// so it is simply tried again next time instead of being stuck.
+export async function fetchBillDetailCached(H, ORG, billId, opts = {}) {
+  const redis = await getRedis();
+  const cacheKey = `npd:cache:bill_detail:${billId}`;
+  if (redis && !opts.refresh) {
+    try {
+      const c = await redis.get(cacheKey);
+      if (c) { if (opts.stats) opts.stats.reused = (opts.stats.reused || 0) + 1; return c; }
+    } catch { /* fall through */ }
+  }
+  const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${billId}?${ORG}`, H);
+  if (opts.stats) opts.stats.opened = (opts.stats.opened || 0) + 1;
+  const lineItems = dd.bill?.line_items || [];
+  if (redis && dd.bill) { try { await redis.set(cacheKey, lineItems); } catch { /* non-fatal */ } }
+  return lineItems;
+}
+
 export async function fetchProjectBills(H, ORG, projectId) {
   const d = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills?${ORG}&project_id=${projectId}&per_page=200`, H);
   return d.bills || [];
 }
 
 // ── Bounded concurrency ─────────────────────────────────────────────────
-export async function processBatched(items, batchSize, pauseMs, fn) {
+// shouldPause (optional): called after each batch; return false to skip the pause
+// (used when a whole batch was answered from saved copies and made no Zoho call).
+export async function processBatched(items, batchSize, pauseMs, fn, shouldPause = () => true) {
   const results = [];
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, i + batchSize);
     const batchResults = await Promise.all(batch.map(fn));
     results.push(...batchResults);
-    if (i + batchSize < items.length) await sleep(pauseMs);
+    if (i + batchSize < items.length && shouldPause()) await sleep(pauseMs);
   }
   return results;
 }
@@ -545,8 +595,19 @@ function matchAllParksFromText(text, keywordsMap) {
   return matches;
 }
 
-export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allProjects, fromDate, toDate, singleAccountName = null) {
+// opts (all optional - without them every bill is opened, as before):
+//   opts.prev           { items, seen } from the last complete run of THIS account:
+//                       the items it produced, and the ids of every bill it had resolved.
+//   opts.recentFromDate bills dated on/after this are opened again even if seen before.
+//   opts.stats          filled in: { opened, reused, seenBillIds }
+// With opts.prev, a bill is reused (no Zoho call) only if it was resolved last time AND is
+// dated before recentFromDate; a bill that is new, recent, or was not resolved last time is
+// opened. A bill that no longer appears in the account report is dropped automatically,
+// because the output is always built from today's report.
+export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allProjects, fromDate, toDate, singleAccountName = null, opts = {}) {
   const results = [];
+  const stats = opts.stats || {};
+  stats.opened = 0; stats.reused = 0; stats.seenBillIds = [];
   const accountsToProcess = singleAccountName ? [singleAccountName] : GENERIC_ACCOUNTS;
 
   for (const accountName of accountsToProcess) {
@@ -565,10 +626,31 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
     for (const e of entries) for (const v of Object.values(e || {})) if (Array.isArray(v)) allTxns = allTxns.concat(v);
     const billTxns = allTxns.filter(t => t.transaction_type === 'bill');
 
-    const attributed = await processBatched(billTxns, 3, 1800, async (t) => {
+    // Which bills can reuse last time's result, and which must be opened.
+    const prevSeen = opts.prev && Array.isArray(opts.prev.seen) && Array.isArray(opts.prev.items) ? new Set(opts.prev.seen) : null;
+    const prevByBill = new Map();
+    if (prevSeen) for (const it of opts.prev.items) { if (it.bill_id) { if (!prevByBill.has(it.bill_id)) prevByBill.set(it.bill_id, []); prevByBill.get(it.bill_id).push(it); } }
+    const recentFrom = opts.recentFromDate || '9999-12-31'; // no date given -> everything counts as recent -> all opened
+    const rowsPerBill = new Map();
+    for (const t of billTxns) rowsPerBill.set(t.transaction_id, (rowsPerBill.get(t.transaction_id) || 0) + 1);
+    const reusedItems = [];
+    const toOpen = [];
+    for (const t of billTxns) {
+      // a bill that appears on more than one report row is always opened, exactly as a full run would
+      if (prevSeen && prevSeen.has(t.transaction_id) && rowsPerBill.get(t.transaction_id) === 1 && (t.date || '') < recentFrom) {
+        reusedItems.push(...(prevByBill.get(t.transaction_id) || []));
+        stats.reused++;
+      } else {
+        toOpen.push(t);
+      }
+    }
+    const unresolved = new Set(); // bills whose detail could not be read - tried again next run
+    stats.opened += toOpen.length;
+
+    const attributed = await processBatched(toOpen, 3, 1800, async (t) => {
       const dd = await fetchZohoJson(`https://www.zohoapis.in/books/v3/bills/${t.transaction_id}?${ORG}`, H);
       const bill = dd.bill;
-      if (!bill) return [];
+      if (!bill) { unresolved.add(t.transaction_id); return []; }
       const allLineItems = bill.line_items || [];
       // Every item actually posted to the generic account being scanned —
       // a bill can have several, potentially belonging to different
@@ -643,7 +725,7 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
           const parkProjects = matchParkProjects(allProjects, PARK_KEYWORDS[park]);
           const parkProjectIds = new Set(parkProjects.map(p => p.project_id));
           if (li.project_id && parkProjectIds.has(li.project_id)) {
-            out.push({ skipped_duplicate: true, bill_number: bill.bill_number, park });
+            out.push({ skipped_duplicate: true, bill_number: bill.bill_number, bill_id: t.transaction_id, date: bill.txn_value_date || bill.date, park });
             continue;
           }
         }
@@ -652,6 +734,7 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
           vendor: bill.vendor_name || '',
           transaction_type: 'bill',
           bill_number: bill.bill_number,
+          bill_id: t.transaction_id,
           branch: null,
           project_name: li.project_name || null,
           account_name: accountName,
@@ -670,6 +753,8 @@ export async function fetchGenericAccountTransactions(H, ORG, allAccounts, allPr
         if (item) results.push(item);
       }
     }
+    for (const item of reusedItems) results.push(item);
+    for (const t of billTxns) if (!unresolved.has(t.transaction_id)) stats.seenBillIds.push(t.transaction_id);
 
     // Any transaction type other than bill or journal — Transfer Order,
     // Vendor Credit, Invoice, Assemblies, Credit Note, Inventory
