@@ -58,6 +58,85 @@ async function checkPendingNewParks() {
   return null;
 }
 
+// One park's answer for a period, worked out from its saved Total Till Date
+// copy: the same filtering + opening/closing-balance arithmetic whether a single
+// park is asked for or all of them at once.
+function periodResponseFromTotal(park, cachedTotal, periodLabel, fromDate, toDate) {
+  const derived = derivePeriodFromFullData(cachedTotal, fromDate, toDate);
+  // OB/CB - reuses the SAME already-fetched Total data, just a different date
+  // slice (everything before this period started).
+  const dayBefore = new Date(fromDate + 'T00:00:00Z');
+  dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+  const dayBeforeStr = dayBefore.toISOString().slice(0, 10);
+  const ob = derivePeriodFromFullData(cachedTotal, '2020-04-01', dayBeforeStr);
+  const cbCategoryTotals = { ...ob.category_totals };
+  for (const [cat, amt] of Object.entries(derived.category_totals || {})) {
+    cbCategoryTotals[cat] = Math.round(((cbCategoryTotals[cat] || 0) + amt) * 100) / 100;
+  }
+  return {
+    park, period_label: periodLabel, from_date: fromDate, to_date: toDate,
+    account_count: derived.account_count, transaction_count: derived.transaction_count,
+    total: derived.total, cwip_total: derived.cwip_total, iaud_total: derived.iaud_total,
+    category_totals: derived.category_totals, unclassified_count: derived.unclassified_count,
+    transactions: derived.transactions,
+    ob_cwip_total: ob.cwip_total, ob_iaud_total: ob.iaud_total, ob_total: ob.total, ob_category_totals: ob.category_totals,
+    cb_cwip_total: Math.round((ob.cwip_total + derived.cwip_total) * 100) / 100,
+    cb_iaud_total: Math.round((ob.iaud_total + derived.iaud_total) * 100) / 100,
+    cb_total: Math.round((ob.total + derived.total) * 100) / 100,
+    cb_category_totals: cbCategoryTotals,
+  };
+}
+
+// Keeps one response comfortably under Vercel's 4.5 MB limit on what a
+// function may send back. Today all parks together are roughly 1 MB.
+const summaryMaxBytes = () => Number(process.env.NPD_SUMMARY_MAX_BYTES) || 3.8 * 1024 * 1024;
+
+// ?mode=summary[&period=...] - what the New Park Development tab asks for when it
+// opens: EVERY park's answer for the chosen period, in one call, read only from
+// the saved Total Till Date copies (never calls Zoho). Each park's entry is
+// exactly what ?park=<name> would have returned, so the browser treats it the
+// same way. `missing` lists parks that have no saved copy, which the browser then
+// fills in one at a time through the normal single-park call.
+async function handleSummary(req, res, startTime, resolved) {
+  const { fromDate, toDate, periodLabel } = resolved;
+  const names = Object.keys(PARK_KEYWORDS);
+  const redis = await getRedis();
+  const saved = {};
+  const missing = [];
+  if (redis) {
+    const totals = await Promise.all(names.map(async (p) => {
+      try { return await redis.get(`npd:cache:park_full:${p}:Total Till Date`); } catch { return null; }
+    }));
+    names.forEach((p, i) => { if (totals[i] && Array.isArray(totals[i].transactions)) saved[p] = totals[i]; else missing.push(p); });
+  } else {
+    missing.push(...names);
+  }
+
+  const parks = {};
+  let oldest = null;
+  for (const [p, total] of Object.entries(saved)) {
+    const stamp = total.refreshed_at || total.cached_at || null;
+    if (stamp && (!oldest || stamp < oldest)) oldest = stamp;
+    parks[p] = periodLabel === 'Total Till Date'
+      ? { ...total, served_from_summary_cache: true }
+      : { ...periodResponseFromTotal(p, total, periodLabel, fromDate, toDate), derived_from_total_cache: true };
+  }
+
+  let detailsOmitted = false;
+  if (JSON.stringify(parks).length > summaryMaxBytes()) {
+    // Too big to send in one piece: keep the figures, leave out the transaction
+    // lists - the browser then asks for a park's list only when that park is opened.
+    detailsOmitted = true;
+    for (const p of Object.keys(parks)) parks[p] = { ...parks[p], transactions: undefined };
+  }
+
+  return res.status(200).json({
+    mode: 'summary', period_label: periodLabel, from_date: fromDate, to_date: toDate,
+    parks, missing, details_omitted: detailsOmitted,
+    saved_at: oldest, response_time_ms: Date.now() - startTime,
+  });
+}
+
 export default async function handler(req, res) {
   const startTime = Date.now();
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -65,6 +144,13 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  if (req.query.mode === 'summary') {
+    const resolvedForSummary = resolvePeriod(req.query);
+    if (resolvedForSummary.error) return res.status(400).json({ error: resolvedForSummary.error });
+    try { return await handleSummary(req, res, startTime, resolvedForSummary); }
+    catch (err) { return res.status(500).json({ error: err.message }); }
+  }
 
   const { park } = req.query;
   if (!park || !PARK_KEYWORDS[park]) {
@@ -104,34 +190,19 @@ export default async function handler(req, res) {
       if (periodLabel !== 'Total Till Date') {
         const cachedTotal = await cacheRedis.get(`npd:cache:park_full:${park}:Total Till Date`);
         if (cachedTotal) {
-          const derived = derivePeriodFromFullData(cachedTotal, fromDate, toDate);
-          // OB/CB — reuses the SAME already-fetched Total data, just a
-          // different date slice (everything before this period started).
-          // No extra Redis read needed since cachedTotal is already here.
-          const dayBefore = new Date(fromDate + 'T00:00:00Z');
-          dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
-          const dayBeforeStr = dayBefore.toISOString().slice(0, 10);
-          const ob = derivePeriodFromFullData(cachedTotal, '2020-04-01', dayBeforeStr);
-          const cbCategoryTotals = { ...ob.category_totals };
-          for (const [cat, amt] of Object.entries(derived.category_totals || {})) {
-            cbCategoryTotals[cat] = Math.round(((cbCategoryTotals[cat] || 0) + amt) * 100) / 100;
-          }
           return res.status(200).json({
-            park, period_label: periodLabel, from_date: fromDate, to_date: toDate,
-            account_count: derived.account_count, transaction_count: derived.transaction_count,
-            total: derived.total, cwip_total: derived.cwip_total, iaud_total: derived.iaud_total,
-            category_totals: derived.category_totals, unclassified_count: derived.unclassified_count,
-            transactions: derived.transactions,
-            ob_cwip_total: ob.cwip_total, ob_iaud_total: ob.iaud_total, ob_total: ob.total, ob_category_totals: ob.category_totals,
-            cb_cwip_total: Math.round((ob.cwip_total + derived.cwip_total) * 100) / 100,
-            cb_iaud_total: Math.round((ob.iaud_total + derived.iaud_total) * 100) / 100,
-            cb_total: Math.round((ob.total + derived.total) * 100) / 100,
-            cb_category_totals: cbCategoryTotals,
+            ...periodResponseFromTotal(park, cachedTotal, periodLabel, fromDate, toDate),
             derived_from_total_cache: true, response_time_ms: Date.now() - startTime,
           });
         }
       }
     } catch { /* fall through to live computation */ }
+  }
+
+  // ?cacheOnly=1 - "give me what is saved, never go to Zoho". Used for quiet
+  // look-ups that must not kick off a long live computation.
+  if (req.query.cacheOnly === '1') {
+    return res.status(404).json({ error: 'NOT_CACHED', message: `${park} has no saved copy yet` });
   }
 
   const env = {

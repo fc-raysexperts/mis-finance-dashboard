@@ -10,9 +10,12 @@ import { OB_PROJECT_MAP, computeInvoicedForProject, mergeStableAndRecent, sixMon
 //   ?mode=monthly&batch=N  — scheduled (GitHub Actions), full finalization (was obInvoicedMonthlyReload.js)
 //   ?mode=one&client=X (or &projectId=X) — on-demand single project (was obInvoicedRefreshOne.js)
 //   ?mode=status&batch=N   — frontend read, self-healing (was obInvoicedStatus.js) — default if mode omitted
-//   ?mode=peek             — frontend read, cache-only, never calls Zoho — all projects in one fast call,
-//                            for showing yesterday's (or last-computed) figures instantly on tab open
-//                            while mode=status quietly self-heals/updates in the background
+//   ?mode=peek             — frontend read, cache-only, never calls Zoho — all projects in one fast call
+//                            (one Redis round trip). Also lists which projects/batches have nothing
+//                            saved, so the browser calls mode=status ONLY for those and not at all
+//                            when everything is saved. (The nightly mode=daily run reads a project's
+//                            full history once if it has no finalized copy yet, so after the first
+//                            night nothing is ever missing.)
 //
 // CACHE RULE: nothing saved here expires. Each project's saved figures stay on
 // screen until the scheduled run has fully recomputed that project and
@@ -53,8 +56,28 @@ async function handleDaily(req, res) {
   const startTime = Date.now();
   const completed = [];
   const errors = [];
+  let firstFullReads = 0;
   for (const { client, projectId } of slice) {
     try {
+      // A project with NO finalized (stable) copy yet - first deployment, cleared
+      // store, or an older saved shape - gets its full history read once, exactly
+      // as the monthly run would. Without this, the browser would have to work
+      // that out itself the first time somebody opens the Order Book tab.
+      let hasStable = false;
+      if (redis) { try { const st = await redis.get(`ob:cache:stable:${projectId}`); hasStable = !!(st && 'paidByFY' in st); } catch { /* treat as absent */ } }
+      if (!hasStable && redis) {
+        const full = await computeInvoicedForProject(H, ORG, projectId, null);
+        const today = new Date().toISOString().slice(0, 10);
+        try {
+          await redis.set(`ob:cache:stable:${projectId}`, full);
+          await redis.set(`ob:cache:stableCutoff:${projectId}`, today);
+          await redis.del(`ob:cache:recent:${projectId}`);
+        } catch (e) { errors.push({ client, stage: 'cache_write', error: e.message }); }
+        completed.push({ client, since: 'full history (first read)', total: full.total, invoice_count: full.invoice_count, creditnote_count: full.creditnote_count });
+        firstFullReads++;
+        continue;
+      }
+
       let cutoff = null;
       if (redis) { try { cutoff = await redis.get(`ob:cache:stableCutoff:${projectId}`); } catch { /* fall through */ } }
       const sinceDate = cutoff || sixMonthsAgoISO();
@@ -75,7 +98,7 @@ async function handleDaily(req, res) {
 
   return res.status(200).json({
     mode: 'daily', batch, total_batches: totalBatches,
-    projects_in_this_batch: slice.length, projects_completed: completed.length,
+    projects_in_this_batch: slice.length, projects_completed: completed.length, first_full_reads: firstFullReads,
     completed, errors, cached: !!redis, duration_ms: Date.now() - startTime,
   });
 }
@@ -206,20 +229,43 @@ async function getOrCompute(H, ORG, redis, projectId) {
   return mergeStableAndRecent(stable, recent);
 }
 
+// The one call the Order Book tab makes when it opens. Everything is read from
+// the saved copy in ONE round trip (all projects' keys together), and the
+// answer says exactly which projects have nothing usable saved, so the browser
+// only asks the slower self-healing call (mode=status) for those - and for
+// nothing at all when every project is already saved (the normal case once the
+// nightly run has been through).
 async function handlePeek(req, res) {
   const redis = await getRedis();
-  const entries = [];
   const isCurrentShape = (d) => d && 'paidByFY' in d;
-  for (const { projectId } of OB_PROJECT_MAP) {
-    let stable = null, recent = null;
-    if (redis) {
-      try { [stable, recent] = await Promise.all([redis.get(`ob:cache:stable:${projectId}`), redis.get(`ob:cache:recent:${projectId}`)]); }
-      catch { /* leave both null — treat as never-computed for this project */ }
-    }
-    if (!isCurrentShape(stable)) { entries.push([projectId, null]); continue; }
-    entries.push([projectId, isCurrentShape(recent) ? mergeStableAndRecent(stable, recent) : mergeStableAndRecent(stable, null)]);
+  const keys = OB_PROJECT_MAP.flatMap(({ projectId }) => [`ob:cache:stable:${projectId}`, `ob:cache:recent:${projectId}`]);
+  let values = keys.map(() => null);
+  if (redis) {
+    try {
+      values = typeof redis.mget === 'function' ? await redis.mget(...keys) : await Promise.all(keys.map((k) => redis.get(k)));
+    } catch { /* leave everything null - the browser will fall back to the self-healing call */ }
   }
-  return res.status(200).json({ invoiced: Object.fromEntries(entries) });
+  const entries = [];
+  const missing = [];            // projects with no finalized (stable) copy at all
+  OB_PROJECT_MAP.forEach(({ projectId }, i) => {
+    const stable = values[i * 2], recent = values[i * 2 + 1];
+    // No recent copy next to a stable one is normal (right after the monthly full read,
+    // before the next nightly run): the stable copy alone is the complete picture.
+    if (!isCurrentShape(stable)) { entries.push([projectId, null]); missing.push(projectId); return; }
+    entries.push([projectId, mergeStableAndRecent(stable, isCurrentShape(recent) ? recent : null)]);
+  });
+  const missingSet = new Set(missing);
+  const missingBatches = [];
+  const totalBatches = Math.ceil(OB_PROJECT_MAP.length / BATCH_SIZE);
+  for (let b = 1; b <= totalBatches; b++) {
+    if (OB_PROJECT_MAP.slice((b - 1) * BATCH_SIZE, b * BATCH_SIZE).some((p) => missingSet.has(p.projectId))) missingBatches.push(b);
+  }
+  return res.status(200).json({
+    invoiced: Object.fromEntries(entries),
+    missing_projects: missing,
+    missing_batches: missingBatches,
+    total_batches: totalBatches,
+  });
 }
 
 async function handleStatus(req, res) {

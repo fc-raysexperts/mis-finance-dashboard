@@ -11,6 +11,7 @@ import NPD from './components/NPD.jsx';
 import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveCache, liveCacheNeedsSelfHeal } from './data/dataService.js';
 import { FY_CONFIG, REV_STRUCTURE, EXP_STRUCTURE } from './data/structure.js';
 import { downloadFYSheet, downloadComparisonSheet } from './excelExport.js';
+import { prefetchSavedTabs } from './data/savedTabData.js';
 
 // Financial Projections is loaded only when its tab is opened (it carries the whole model as static data).
 const FinancialProjections = lazy(() => import('./components/FinancialProjections.jsx'));
@@ -72,6 +73,11 @@ export default function App() {
       setLastRefresh(cached);
       setHydrating(false);
       forceUpdate(n => n + 1);
+
+      // 1b. The Order Book and New Park Development tabs show saved figures too.
+      //     Read them in the background now (one request each), so by the time
+      //     either tab is clicked its figures are already here.
+      prefetchSavedTabs();
 
       // 2. The saved figures are refreshed every night by the scheduled run
       //    (1:17 AM IST, with a second chance at 3:17 AM) and never expire. The browser only fetches live as a

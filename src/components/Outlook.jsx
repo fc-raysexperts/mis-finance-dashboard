@@ -6,34 +6,33 @@ import { computeTotals } from '../data/quarterUtils.js';
 import { loadInvestorData, saveInvestorData, DEFAULTS } from '../data/investorData.js';
 import { GenericBarChart } from './Charts.jsx';
 import { downloadOrderBookSheet } from '../orderBookExport.js';
+import { getObMemo, loadObSaved, mergeIntoObMemo, isFresh } from '../data/savedTabData.js';
 
 export default function Outlook({ curFY }) {
   const [editMode, setEditMode] = useState(false);
   const [inv, setInv] = useState(DEFAULTS);
   useEffect(() => { loadInvestorData().then(setInv); }, []);
 
-  // Invoiced Amount / Status — two-stage load, same "old data stays visible"
-  // pattern as the NPD tab. Stage 1 (mode=peek, one fast call, cache-only,
-  // never touches Zoho): shows whatever was last computed — even
-  // yesterday's — the instant the tab opens, no waiting on '—'. Stage 2
-  // (mode=status, 8 batches of 5 projects each — matching the table's own
-  // S.No. order, since OB_PROJECT_MAP's order already matches it): quietly
-  // self-heals anything missing or due for refresh in the background,
-  // merging in as each batch resolves.
+  // Invoiced Amount / Status. The nightly run saves every project's figures, so
+  // opening this tab is ONE cache-only read (mode=peek) that shows all of them at
+  // once - and when App.jsx has already done that read in the background (it
+  // does, right after the P&L figures appear) the figures are on screen the
+  // moment the tab opens, with no request and no waiting.
   //
-  // Batches run strictly one at a time, in order — never concurrently, since
-  // that would put just as much simultaneous load on Zoho as the old
-  // 10-per-batch setup did. Retries follow a genuine two-pass shape: Pass 1
-  // attempts every batch once, in order; any that failed are only retried
-  // in Pass 2, after Pass 1 has finished all 8. That gap in real time is the
-  // point — the likely failure cause here is transient Zoho rate-limiting or
-  // a timeout under load, and retrying the same batch back-to-back with zero
-  // gap just hits the same condition again. A batch that still fails after
-  // its Pass 2 retry is simply skipped — it never blanks out what Stage 1 or
-  // another batch already delivered.
+  // mode=status (the slower, self-healing call that may talk to Zoho) is used
+  // ONLY for the batches of 5 projects that mode=peek reports as having nothing
+  // saved - so normally it is never called at all and no "updating" banner shows.
+  // Batches run strictly one at a time, in order. Retries follow a genuine
+  // two-pass shape: Pass 1 attempts every needed batch once; any that failed are
+  // retried in Pass 2 only after Pass 1 has finished, because the likely failure
+  // cause is transient Zoho rate-limiting and an immediate retry hits the same
+  // condition. A batch that still fails is skipped - it never blanks out
+  // figures that are already showing.
   const TOTAL_BATCHES = 8;
-  const [invoiced, setInvoiced] = useState({});
-  const [invoicedLoading, setInvoicedLoading] = useState(true);
+  const ALL_BATCHES = Array.from({ length: TOTAL_BATCHES }, (_, i) => i + 1);
+  const [invoiced, setInvoiced] = useState(() => getObMemo()?.invoiced || {});
+  const [invoicedLoading, setInvoicedLoading] = useState(() => !getObMemo());
+  const [healTotal, setHealTotal] = useState(0); // batches the background fill-in has to do (0 = nothing to fill / not known yet)
   const [invoicedBatchesDone, setInvoicedBatchesDone] = useState(0);
   const [invoicedRetrying, setInvoicedRetrying] = useState(0); // batches left in the retry pass
   const [obRefreshing, setObRefreshing] = useState(false);
@@ -48,14 +47,13 @@ export default function Outlook({ curFY }) {
     } catch { return null; }
   }
 
-  // Runs batches 1..TOTAL_BATCHES through urlFor(batch) in two passes as
-  // described above. onResult(batch, data, isRetryPass) fires once per
-  // batch per pass it's actually attempted in — data is null if that
-  // attempt failed. isCancelled() is checked before every single fetch so
-  // an unmount (tab switch) stops promptly instead of finishing in the void.
-  async function runTwoPassSequential(urlFor, onResult, isCancelled, onPassOneDone, onRetryProgress) {
+  // Runs the given batches through urlFor(batch) in two passes as described
+  // above. onResult(batch, data, isRetryPass) fires once per batch per pass it's
+  // actually attempted in - data is null if that attempt failed. isCancelled() is
+  // checked before every single fetch so an unmount (tab switch) stops promptly.
+  async function runTwoPassSequential(urlFor, onResult, isCancelled, onPassOneDone, onRetryProgress, batches = ALL_BATCHES) {
     const failed = [];
-    for (let batch = 1; batch <= TOTAL_BATCHES; batch++) {
+    for (const batch of batches) {
       if (isCancelled()) return;
       const d = await fetchJsonOnce(urlFor(batch));
       if (d === null) failed.push(batch);
@@ -72,26 +70,39 @@ export default function Outlook({ curFY }) {
 
   useEffect(() => {
     let cancelled = false;
+    (async () => {
+      // 1. The saved copy: from memory if it is already here and recent, else one read.
+      let memo = getObMemo();
+      if (memo) setInvoiced(prev => ({ ...prev, ...memo.invoiced }));
+      if (!isFresh(memo)) {
+        try {
+          memo = await loadObSaved();
+          if (cancelled) return;
+          setInvoiced(prev => ({ ...prev, ...memo.invoiced }));
+        } catch { if (cancelled) return; /* could not read it: fall back to filling everything below */ }
+      }
 
-    // Stage 1 — instant, cache-only, no Zoho calls
-    fetch('/api/obInvoiced?mode=peek')
-      .then(r => r.json())
-      .then(d => { if (!cancelled) setInvoiced(prev => ({ ...prev, ...(d.invoiced || {}) })); })
-      .catch(() => { /* Stage 2 below will still fill things in */ });
-
-    // Stage 2 — two-pass sequential self-heal (see comment above)
-    runTwoPassSequential(
-      batch => `/api/obInvoiced?mode=status&batch=${batch}`,
-      (batch, d, isRetryPass) => {
-        if (cancelled) return;
-        if (d?.invoiced) setInvoiced(prev => ({ ...prev, ...d.invoiced }));
-        if (!isRetryPass) setInvoicedBatchesDone(done => done + 1); // count each batch once, not again on its retry
-      },
-      () => cancelled,
-      (failedCount) => { if (!cancelled) { setInvoicedRetrying(failedCount); if (failedCount === 0) setInvoicedLoading(false); } },
-      () => { if (!cancelled) setInvoicedRetrying(n => { const next = n - 1; if (next <= 0) setInvoicedLoading(false); return next; }); }
-    );
-
+      // 2. Fill in ONLY what has nothing saved (normally nothing).
+      const batches = memo && Array.isArray(memo.missingBatches) ? memo.missingBatches : ALL_BATCHES;
+      if (batches.length === 0) { setInvoicedLoading(false); return; }
+      setInvoicedLoading(true); setHealTotal(batches.length); setInvoicedBatchesDone(0); setInvoicedRetrying(0);
+      await runTwoPassSequential(
+        batch => `/api/obInvoiced?mode=status&batch=${batch}`,
+        (batch, d, isRetryPass) => {
+          if (d?.invoiced) { mergeIntoObMemo(d.invoiced); if (!cancelled) setInvoiced(prev => ({ ...prev, ...d.invoiced })); }
+          if (cancelled) return;
+          if (!isRetryPass) setInvoicedBatchesDone(done => done + 1); // count each batch once, not again on its retry
+        },
+        () => cancelled,
+        (failedCount) => { if (!cancelled) { setInvoicedRetrying(failedCount); if (failedCount === 0) setInvoicedLoading(false); } },
+        () => { if (!cancelled) setInvoicedRetrying(n => { const next = n - 1; if (next <= 0) setInvoicedLoading(false); return next; }); },
+        batches
+      );
+      // 3. Re-read what is saved now, so the remembered copy is accurate for the next visit.
+      if (cancelled) return;
+      try { const fresh = await loadObSaved(); if (!cancelled) setInvoiced(prev => ({ ...prev, ...fresh.invoiced })); } catch { /* the per-batch merge above already holds the figures */ }
+      if (!cancelled) setInvoicedLoading(false);
+    })();
     return () => { cancelled = true; };
   }, []);
   const invoicedFor = (projectId) => invoiced?.[projectId] || null;
@@ -116,9 +127,8 @@ export default function Outlook({ curFY }) {
       () => setObRefreshRetrying(n => n - 1)
     );
     try {
-      const r = await fetch('/api/obInvoiced?mode=peek');
-      const d = await r.json();
-      setInvoiced(prev => ({ ...prev, ...(d.invoiced || {}) }));
+      const fresh = await loadObSaved();
+      setInvoiced(prev => ({ ...prev, ...fresh.invoiced }));
     } catch { /* the per-batch cache writes already happened regardless */ }
     setObRefreshing(false);
   }
@@ -251,16 +261,17 @@ export default function Outlook({ curFY }) {
 
       {/* ═══ ORDER BOOK SECTIONS FIRST ═══ */}
 
-      {/* Non-blocking now — Stage 1 (mode=peek) already populated whatever
-          was cached the instant the tab opened, so this banner just means
-          "still quietly checking/updating in the background", not "nothing
-          is visible yet". Gone once all 8 self-heal batches finish. */}
+      {/* Only shown while the saved figures are being read for the very first time,
+          or while projects that have NO saved copy are being filled in. When
+          everything is saved (the normal case) this never appears. */}
       {invoicedLoading && !obRefreshing && (
         <div className="npd-loading">
           <span className="npd-spinner" />
-          {invoicedBatchesDone >= TOTAL_BATCHES
-            ? ` Retrying ${invoicedRetrying} batch${invoicedRetrying === 1 ? '' : 'es'} that didn't load the first time — figures already shown stay visible while this finishes…`
-            : ` Updating today's Invoiced Amount data in the background — ${invoicedBatchesDone}/${TOTAL_BATCHES} batches done (figures already shown stay visible while this finishes)…`}
+          {healTotal === 0
+            ? ' Loading the saved Invoiced Amount figures…'
+            : invoicedBatchesDone >= healTotal
+              ? ` Retrying ${invoicedRetrying} batch${invoicedRetrying === 1 ? '' : 'es'} that didn't load the first time — figures already shown stay visible while this finishes…`
+              : ` Filling in Invoiced Amount figures that had no saved copy — ${invoicedBatchesDone}/${healTotal} batches done (figures already shown stay visible while this finishes)…`}
         </div>
       )}
       {obRefreshing && (

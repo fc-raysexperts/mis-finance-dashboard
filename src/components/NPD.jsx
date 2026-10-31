@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { fmt } from '../utils.js';
 import { NPDParkCostChart } from './Charts.jsx';
 import { downloadNPDExcel } from '../npdExcelExport.js';
+import { getNpdMemo, loadNpdSaved, addParkToNpdMemo, isFresh } from '../data/savedTabData.js';
 
 // Descending by real Total Till Date cost (biggest first) — verified from
 // actual dashboard figures, not assumption. Drives table column order and
@@ -31,32 +32,6 @@ const parkColStyle = (index) => ((index + 1) % 3 === 0 && index < PARK_LIST.leng
 // — show a plain dash rather than a misleading 0.
 function fmtOB(v) {
   return (v === null || v === undefined) ? '—' : fmt(v);
-}
-
-// Indian fiscal year (Apr-Mar) that "today" currently falls in, as a
-// 2-digit end-year (e.g. 27 for FY ending March 2027) — matches the same
-// short form used by the fy dropdown/state elsewhere in this component.
-function getCurrentFiscalYearShort() {
-  const now = new Date();
-  const endYear = now.getMonth() + 1 >= 4 ? now.getFullYear() + 1 : now.getFullYear();
-  return endYear % 100;
-}
-
-// Client-side mirror of the server's derivePeriodFromFullData — filters an
-// already-fetched transaction list by date range and recomputes the
-// aggregates, entirely in the browser. Used to proactively build a second
-// snapshot (current FY) from data we already have in hand after a Total
-// load, with zero additional network calls.
-function deriveClientSidePeriod(transactions, fromDate, toDate) {
-  const filtered = (transactions || []).filter(t => (t.date || '') >= fromDate && (t.date || '') <= toDate);
-  const total = Math.round(filtered.reduce((s, t) => s + t.amount, 0) * 100) / 100;
-  const cwip_total = Math.round(filtered.filter(t => t.head_grouping === 'CWIP').reduce((s, t) => s + t.amount, 0) * 100) / 100;
-  const iaud_total = Math.round(filtered.filter(t => t.head_grouping === 'IAUD').reduce((s, t) => s + t.amount, 0) * 100) / 100;
-  const category_totals = {};
-  for (const t of filtered) category_totals[t.category] = Math.round(((category_totals[t.category] || 0) + t.amount) * 100) / 100;
-  const unclassified_count = filtered.filter(t => t.head_grouping === 'Unclassified').length;
-  const account_count = new Set(filtered.map(t => t.account_name).filter(Boolean)).size;
-  return { account_count, total, cwip_total, iaud_total, category_totals, unclassified_count };
 }
 
 function buildPeriodQuery({ periodType, fy, quarter, year, month }) {
@@ -132,6 +107,21 @@ function computeSumRow(parks) {
   return sum;
 }
 
+// Builds the table data from whatever parks' answers are available. Each park's
+// answer is the same object the single-park call returns (period already applied).
+function summaryFromParks(parkData) {
+  const parks = {};
+  for (const p of PARK_LIST) if (parkData[p]) parks[p] = extractSummaryFields(parkData[p]);
+  return { parks, sum: computeSumRow(parks) };
+}
+
+// Only answers that still carry their transaction list can feed Park Detail directly.
+function withTransactions(parkData) {
+  const out = {};
+  for (const p of PARK_LIST) if (parkData[p] && Array.isArray(parkData[p].transactions)) out[p] = parkData[p];
+  return out;
+}
+
 export default function NPD() {
   const [periodType, setPeriodType] = useState('total');
   const [fy, setFy] = useState(27);
@@ -139,20 +129,28 @@ export default function NPD() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(8);
 
-  const [summary, setSummary] = useState(null);
-  const [summaryLoading, setSummaryLoading] = useState(false);
+  // The saved copy (filled every night) is read in ONE call, or comes straight
+  // from memory when App.jsx already read it in the background - so on a normal
+  // day this tab has nothing to wait for. See src/data/savedTabData.js.
+  const firstMemo = getNpdMemo('period=total');
+  const [summary, setSummary] = useState(() => firstMemo ? summaryFromParks(firstMemo.parks) : null);
+  // true until we know nothing is missing: no saved copy read yet, or some parks have none
+  const [summaryLoading, setSummaryLoading] = useState(() => !firstMemo || PARK_LIST.some(p => !firstMemo.parks[p]));
+  // Which period the park answers held below belong to - Park Detail never uses or
+  // fetches anything while this differs from the period on screen.
+  const [dataQuery, setDataQuery] = useState(() => firstMemo ? 'period=total' : null);
   const [summaryError, setSummaryError] = useState(null);
   const [parksLoaded, setParksLoaded] = useState(0);
-  const [snapshotTimestamp, setSnapshotTimestamp] = useState(null);
-  // What's actually being fetched right now, for a precise loading
-  // message — either one of the two generic accounts (loaded first, in
-  // order) or a specific park (loaded after, by name).
+  const [fillTotal, setFillTotal] = useState(0);
+  const [readFailed, setReadFailed] = useState(false); // the one-call read itself failed, so everything is loaded park by park
+  const [savedAt, setSavedAt] = useState(() => firstMemo?.savedAt || null);
+  // Only while parks with NO saved copy are being filled in the slow way: what's
+  // being fetched right now - one of the three shared accounts, or a park by name.
   const [loadingStage, setLoadingStage] = useState(null);
 
-  // Holds each park's COMPLETE response (including full transactions) as
-  // the sequential loop fetches them — lets Park Detail reuse this directly
-  // for whichever park is selected, instead of a redundant separate fetch.
-  const [allParksFullData, setAllParksFullData] = useState({});
+  // Each park's COMPLETE answer (including full transactions), which lets Park
+  // Detail show any park instantly with no request of its own.
+  const [allParksFullData, setAllParksFullData] = useState(() => firstMemo && !firstMemo.detailsOmitted ? withTransactions(firstMemo.parks) : {});
 
   const [selectedPark, setSelectedPark] = useState('Dechu');
   const [parkDetail, setParkDetail] = useState(null);
@@ -183,35 +181,46 @@ export default function NPD() {
     }
   }
 
-  // ── Summary: fetch all 15 parks ONE AT A TIME via the same proven
-  //    single-park endpoint that already powers Park Detail and the Excel
-  //    export. A failure on any one park is fully isolated — it can never
-  //    destroy other parks' already-successful data, unlike the previous
-  //    4-park-chunk design where one failure lost the whole chunk.
+  // ── Summary. Normal day: every park is already saved, so this is one read (or
+  //    nothing at all if it is already in memory) and the tables are complete.
+  //    Only a park with NO saved copy (first deployment, cleared store, or a night
+  //    that failed twice) is filled in the slow way below - one park at a time,
+  //    through the same single-park call as before, so one park's trouble can
+  //    never affect another's - while everything already saved stays on screen.
   useEffect(() => {
     let cancelled = false;
-    setSummaryLoading(true); setSummaryError(null); setParksLoaded(0); setLoadingStage(null);
-    setAllParksFullData({});
+    setSummaryError(null); setLoadingStage(null); setParksLoaded(0); setFillTotal(0); setReadFailed(false);
 
-    // Show a previous successful snapshot instantly, clearly labeled as
-    // possibly outdated, while the real fetch runs underneath — something
-    // useful on screen immediately instead of a blank wait on every load.
-    try {
-      const snapshotRaw = localStorage.getItem(`npd_snapshot_${periodQuery}`);
-      if (snapshotRaw) {
-        const snapshot = JSON.parse(snapshotRaw);
-        setSummary(snapshot.data);
-        setSnapshotTimestamp(snapshot.savedAt);
-      } else {
-        setSnapshotTimestamp(null);
-      }
-    } catch { /* corrupted/unavailable storage — just skip the instant snapshot */ }
+    const show = (memo) => {
+      setSummary(summaryFromParks(memo.parks));
+      setAllParksFullData(memo.detailsOmitted ? {} : withTransactions(memo.parks));
+      setDataQuery(periodQuery);
+      setSavedAt(memo.savedAt || null);
+    };
+
+    let memo = getNpdMemo(periodQuery);
+    if (memo) { show(memo); setSummaryLoading(PARK_LIST.some(p => !memo.parks[p])); }
+    else { setSummary(null); setAllParksFullData({}); setDataQuery(periodQuery); setSavedAt(null); setSummaryLoading(true); }
 
     (async () => {
-      const parks = {};
-      const fullData = {};
+      let readError = '';
+      if (!isFresh(memo)) {
+        try {
+          memo = await loadNpdSaved(periodQuery);
+          if (cancelled) return;
+          show(memo);
+        } catch (e) { if (cancelled) return; readError = e.message; /* keep any earlier copy; fill below */ }
+      }
+
+      if (readError) setReadFailed(true);
+      const have = { ...(memo ? memo.parks : {}) };
+      const missing = PARK_LIST.filter(p => !have[p]);
+      if (missing.length === 0) { setSummaryLoading(false); return; }
+
+      // ── Slow path, only for parks with nothing saved ──
+      setSummaryLoading(true); setFillTotal(missing.length);
       const staleParks = [];
-      let lastError = '';
+      let lastError = readError;
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
       async function fetchOnePark(park) {
@@ -222,187 +231,77 @@ export default function NPD() {
         return d;
       }
 
-      // Channel 3, first — CWIP, then IAUD, then land lease registration
-      // NEW NPD, exactly in that order. Always called, every load, but
-      // each call is self-checking on the backend: if that account is
-      // already cached for today (the normal case, once the daily cron
-      // has run before any park's own cron), it returns almost
-      // immediately. Only genuinely slow when that account's cache is
-      // actually missing. Guaranteeing this completes BEFORE any park is
-      // requested means every park's own computation always finds
-      // Channel 3 ready on its very first pass — no separate "detect
-      // missing, refresh, reload everything" fallback needed.
-      if (!cancelled) {
-        setLoadingStage({ type: 'generic_account', name: 'Capital Work in Progress' });
-        try { await fetch('/api/npdGenericAccountsRefresh?account=cwip'); } catch { /* proceed regardless — parks will simply be missing this portion if it never resolves */ }
-      }
-      if (!cancelled) {
-        setLoadingStage({ type: 'generic_account', name: 'Intangible Asset Under Development' });
-        try { await fetch('/api/npdGenericAccountsRefresh?account=iaud'); } catch { /* proceed regardless */ }
-      }
-      if (!cancelled) {
-        setLoadingStage({ type: 'generic_account', name: 'land lease registration NEW NPD' });
-        try { await fetch('/api/npdGenericAccountsRefresh?account=llr'); } catch { /* proceed regardless */ }
-      }
-
-      // Staged retry: finish a full first pass through every park before
-      // ever retrying anything, THEN retry only what failed after a short
-      // wait, THEN one final retry after a longer wait. Letting other
-      // parks' work happen in between gives a transient issue more natural
-      // time to clear than immediately re-hitting the same park again.
-      //
-      // Fetch order only — NEVER changes table column order (that always
-      // stays PARK_LIST). Lightest/fastest parks first, heaviest last —
-      // derived directly from PARK_LIST (which is now sorted biggest-first)
-      // via reverse(), rather than a second hardcoded list. One source of
-      // truth for park size — impossible for fetch order and display order
-      // to silently disagree with each other the way two separate
-      // hardcoded arrays eventually could.
-      const FETCH_ORDER = [...PARK_LIST].reverse();
-      let remaining = [...FETCH_ORDER];
-      for (const park of remaining) {
+      // The three shared accounts first - CWIP, then IAUD, then land lease
+      // registration NEW NPD. Each call is self-checking on the backend (instant
+      // when already saved), and finishing them BEFORE any park is requested means
+      // every park's own computation finds them ready on its first pass.
+      for (const [account, name] of [['cwip', 'Capital Work in Progress'], ['iaud', 'Intangible Asset Under Development'], ['llr', 'land lease registration NEW NPD']]) {
         if (cancelled) return;
-        setLoadingStage({ type: 'park', name: park });
-        try {
-          const d = await fetchOnePark(park);
-          parks[park] = extractSummaryFields(d);
-          fullData[park] = d;
-          if (d.stale) staleParks.push(park);
-          if (!cancelled) setParksLoaded(n => n + 1);
-        } catch { /* leave in remaining-to-retry, handled below */ }
+        setLoadingStage({ type: 'generic_account', name });
+        try { await fetch(`/api/npdGenericAccountsRefresh?account=${account}`); } catch { /* proceed regardless */ }
       }
-      remaining = FETCH_ORDER.filter(p => !parks[p]);
 
-      if (remaining.length > 0 && !cancelled) {
-        await sleep(5000); // 2nd try — short wait
+      // Staged retry: a full first pass over the missing parks before retrying
+      // anything, then retry only what failed after 5 s, then 10 s, then a real
+      // 60 s wait (Zoho's limit is 100 requests per MINUTE, so only a full minute
+      // guarantees a fresh window). Heaviest parks last (PARK_LIST is biggest-first).
+      let remaining = [...missing].reverse();
+      for (const waitMs of [0, 5000, 10000, 60000]) {
+        if (remaining.length === 0 || cancelled) break;
+        if (waitMs) await sleep(waitMs);
         const stillFailed = [];
         for (const park of remaining) {
           if (cancelled) return;
           setLoadingStage({ type: 'park', name: park });
           try {
             const d = await fetchOnePark(park);
-            parks[park] = extractSummaryFields(d);
-            fullData[park] = d;
-            if (d.stale) staleParks.push(park);
-            if (!cancelled) setParksLoaded(n => n + 1);
-          } catch (e) {
-            stillFailed.push(park);
-            lastError = e.message;
-          }
+            have[park] = d;
+            if (d.stale) staleParks.push(park); else addParkToNpdMemo(periodQuery, park, d);
+            if (!cancelled) {
+              setParksLoaded(n => n + 1);
+              setSummary(summaryFromParks(have));
+              setAllParksFullData(prev => ({ ...prev, ...withTransactions({ [park]: d }) }));
+            }
+          } catch (e) { stillFailed.push(park); lastError = e.message; }
         }
         remaining = stillFailed;
       }
-
-      if (remaining.length > 0 && !cancelled) {
-        await sleep(10000); // 3rd try — longer wait
-        const stillFailed2 = [];
-        for (const park of remaining) {
-          if (cancelled) return;
-          setLoadingStage({ type: 'park', name: park });
-          try {
-            const d = await fetchOnePark(park);
-            parks[park] = extractSummaryFields(d);
-            fullData[park] = d;
-            if (d.stale) staleParks.push(park);
-            if (!cancelled) setParksLoaded(n => n + 1);
-          } catch (e) {
-            stillFailed2.push(park);
-            lastError = e.message;
-          }
-        }
-        remaining = stillFailed2;
-      }
-
-      if (remaining.length > 0 && !cancelled) {
-        // 4th, final try — a genuine 60-second wait. Zoho's limit is 100
-        // requests per MINUTE, rolling — the earlier 5s/10s waits are both
-        // shorter than that window, so they can only ever catch a partial
-        // recovery. A full 60 seconds guarantees a genuinely fresh window
-        // by the time we retry, not one still overlapping the congested one.
-        await sleep(60000);
-        for (const park of remaining) {
-          if (cancelled) return;
-          setLoadingStage({ type: 'park', name: park });
-          try {
-            const d = await fetchOnePark(park);
-            parks[park] = extractSummaryFields(d);
-            fullData[park] = d;
-            if (d.stale) staleParks.push(park);
-            if (!cancelled) setParksLoaded(n => n + 1);
-          } catch (e) {
-            lastError = e.message;
-          }
-        }
-      }
-
-      const failedParks = PARK_LIST.filter(p => !parks[p]);
       if (cancelled) return;
 
-      setAllParksFullData(fullData);
-      if (Object.keys(parks).length > 0) {
-        const freshSummary = { parks, sum: computeSumRow(parks) };
-        setSummary(freshSummary);
-        setSnapshotTimestamp(null);
-        // Only snapshot a genuinely COMPLETE result (all 15 parks, zero
-        // failures) — a partial snapshot could later get shown as if it
-        // were the full picture, which is worse than no snapshot at all.
-        if (failedParks.length === 0 && staleParks.length === 0) {
-          try {
-            localStorage.setItem(`npd_snapshot_${periodQuery}`, JSON.stringify({ data: freshSummary, savedAt: new Date().toISOString() }));
-          } catch { /* storage full/unavailable — non-fatal, just skip snapshotting */ }
-
-          // Proactive extra snapshot: if this WAS the Total view, also
-          // derive and save the current fiscal year — entirely from data
-          // already in hand (each park's full transaction list), zero
-          // extra network calls. Means switching to "this year" after a
-          // Total load also gets an instant snapshot, not just reloading
-          // the exact same period you were already on.
-          if (periodType === 'total') {
-            try {
-              const currentFy = getCurrentFiscalYearShort();
-              const fyStartYear = 2000 + currentFy - 1;
-              const fyFromDate = `${fyStartYear}-04-01`;
-              const fyToDate = `${2000 + currentFy}-03-31`;
-              const derivedParks = {};
-              for (const [parkName, data] of Object.entries(fullData)) {
-                derivedParks[parkName] = deriveClientSidePeriod(data.transactions, fyFromDate, fyToDate);
-              }
-              const derivedSummary = { parks: derivedParks, sum: computeSumRow(derivedParks) };
-              const fyPeriodQuery = `period=yearly&fy=${currentFy}`;
-              localStorage.setItem(`npd_snapshot_${fyPeriodQuery}`, JSON.stringify({ data: derivedSummary, savedAt: new Date().toISOString() }));
-            } catch { /* non-fatal — this is a bonus snapshot, not the primary one */ }
-          }
-        }
-      }
-      if (failedParks.length > 0) {
+      if (remaining.length > 0) {
         setSummaryError(
-          `${failedParks.length} of ${PARK_LIST.length} parks failed to load (after 4 attempts each, including a full 60s wait) — missing: ${failedParks.join(', ')}. ` +
-          `${Object.keys(parks).length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${lastError}` +
+          `${remaining.length} of ${PARK_LIST.length} parks failed to load (after 4 attempts each, including a full 60s wait) — missing: ${remaining.join(', ')}. ` +
+          `${Object.keys(have).length > 0 ? 'Showing the parks that did load successfully below.' : ''} Reason: ${lastError}` +
           (staleParks.length > 0 ? ` Note: ${staleParks.join(', ')} are showing older cached data (fresh load failed) — check individual Park Detail for exact age.` : '')
         );
       } else if (staleParks.length > 0) {
         setSummaryError(`${staleParks.join(', ')} are showing older cached data (a fresh load failed after 4 attempts) — check individual Park Detail for exact age.`);
       }
+      setLoadingStage(null);
       setSummaryLoading(false);
     })();
 
     return () => { cancelled = true; };
   }, [periodQuery]);
 
-  // ── Park Detail: reuse data already fetched during the summary loop if
-  //    available (instant, zero extra request) — only fetch fresh if the
-  //    selected park wasn't successfully loaded there (e.g. it failed, or
-  //    the user picked a different park after summary already finished).
+  // ── Park Detail: every park's full answer arrives with the summary, so this is
+  //    instant for any park. Only if a park's list is not in hand (it had no saved
+  //    copy and its fill failed, or the response was too large to include lists)
+  //    is it fetched on its own.
   useEffect(() => {
-    if (summaryLoading) return;
     let cancelled = false;
 
-    if (allParksFullData[selectedPark]) {
+    const dataIsForThisPeriod = dataQuery === periodQuery;
+    if (dataIsForThisPeriod && allParksFullData[selectedPark]) {
       setParkDetail(allParksFullData[selectedPark]);
       setParkDetailError(null);
       setParkDetailLoading(false);
       return;
     }
+    // Not ready: the figures above are still being read/filled (or still belong to
+    // another period). Fetching now could start a second slow computation of the
+    // same park, so wait.
+    if (!dataIsForThisPeriod || summaryLoading) { setParkDetail(null); setParkDetailLoading(false); return; }
 
     setParkDetailLoading(true); setParkDetailError(null);
     (async () => {
@@ -425,7 +324,7 @@ export default function NPD() {
       if (!cancelled) { setParkDetailError(lastErr.message); setParkDetailLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [selectedPark, periodQuery, summaryLoading, allParksFullData]);
+  }, [selectedPark, periodQuery, summaryLoading, allParksFullData, dataQuery]);
 
   const sum = summary?.sum;
   const parks = summary?.parks || {};
@@ -480,19 +379,14 @@ export default function NPD() {
       </div>
 
       {/* ── Summary tables ── */}
-      {summaryLoading && snapshotTimestamp && (
-        <div className="npd-loading" style={{ background: '#eff6ff', borderColor: '#93c5fd', color: '#1d4ed8' }}>
-          ℹ Showing your last successful load (from {new Date(snapshotTimestamp).toLocaleString()}) while today's fresh data loads underneath — this will be replaced automatically once ready.
-        </div>
-      )}
       {summaryLoading && (
         <div className="npd-loading">
           <span className="npd-spinner" />
           {loadingStage?.type === 'generic_account'
-            ? ` Loading Summary — '${loadingStage.name}' generic account…`
+            ? ` ${readFailed ? 'The one-step read of the saved Summary failed, so loading park by park instead' : 'Filling in parks that have no saved copy yet'} — first the '${loadingStage.name}' shared account…`
             : loadingStage?.type === 'park'
-              ? ` Loading Summary — ${loadingStage.name} (${parksLoaded}/${PARK_LIST.length} parks done, one at a time, so one park's issue can never affect another's)…`
-              : ' Loading Summary…'}
+              ? ` ${readFailed ? 'Loading park by park' : 'Filling in a park that has no saved copy yet'} — ${loadingStage.name} (${parksLoaded}/${fillTotal} done, one at a time, so one park's issue can never affect another's)…`
+              : ' Loading the saved Summary…'}
         </div>
       )}
       {summaryError && <div className="error-banner">⚠ {summaryError}</div>}
@@ -504,6 +398,11 @@ export default function NPD() {
       )}
       {summary && (
         <>
+          {savedAt && !summaryLoading && (
+            <div style={{ fontSize: 12, color: '#64748b', margin: '2px 2px 8px' }}>
+              Saved figures from {new Date(savedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} IST
+            </div>
+          )}
           <div className="tbl-wrap no-scroll npd-park-table">
             <table>
               <thead>
@@ -613,7 +512,7 @@ export default function NPD() {
         </div>
       </div>
 
-      {summaryLoading && (
+      {summaryLoading && !parkDetail && (
         <div className="npd-loading">
           <span className="npd-spinner" /> Waiting for the summary above to finish first…
         </div>
