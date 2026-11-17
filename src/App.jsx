@@ -8,6 +8,8 @@ import SolarParks from './components/SolarParks.jsx';
 import Manufacturing from './components/Manufacturing.jsx';
 import UKArin from './components/UKArin.jsx';
 import NPD from './components/NPD.jsx';
+import Challenges from './components/Challenges.jsx';
+import Mitigants from './components/Mitigants.jsx';
 import { getRevData, getExpData, refreshLiveData, getLastRefreshed, hydrateLiveCache, liveCacheNeedsSelfHeal } from './data/dataService.js';
 import { FY_CONFIG, REV_STRUCTURE, EXP_STRUCTURE } from './data/structure.js';
 import { downloadFYSheet, downloadComparisonSheet } from './excelExport.js';
@@ -16,10 +18,31 @@ import { prefetchSavedTabs } from './data/savedTabData.js';
 // Financial Projections is loaded only when its tab is opened (it carries the whole model as static data).
 const FinancialProjections = lazy(() => import('./components/FinancialProjections.jsx'));
 
-const TABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison', 'Financial Metrics', 'Order Book & Outlook', 'New Park Development', 'More Details', 'Financial Projections'];
-const MORE_DETAILS_TAB = 7;
-const FP_TAB = 8;
+const TABS = ['P&L Statement', 'Financial Metrics', 'Order Book & Outlook', 'New Park Development', 'More Details', 'Financial Projections', 'Challenges', 'Mitigants'];
+const PL_TAB = 0;
+const FINANCIAL_METRICS_TAB = 1;
+const OB_TAB = 2;
+const NPD_TAB = 3;
+const MORE_DETAILS_TAB = 4;
+const FP_TAB = 5;
+const CHALLENGES_TAB = 6;
+const MITIGANTS_TAB = 7;
+// P&L Statement groups the four P&L views as sub-tabs (same pattern as More Details).
+const PL_SUBTABS = ['Monthly P&L', 'Revenue', 'Expenses', 'Comparison'];
+const PL_COMPARISON = 3; // index of 'Comparison' in PL_SUBTABS
 const MORE_SUBTABS = ['Solar Parks', 'Manufacturing', 'UK - Arin Power'];
+
+// A row of pill buttons just below the main tabs (P&L Statement and More Details use it).
+function SubNav({ label, items, active, onPick }) {
+  return (
+    <nav className="subtab-nav" aria-label={label}>
+      {items.map((t, i) => (
+        <button key={t} className={`subtab-btn${active === i ? ' active' : ''}`}
+          onClick={() => onPick(i)}>{t}</button>
+      ))}
+    </nav>
+  );
+}
 
 function ChartIcon() {
   return (
@@ -41,6 +64,7 @@ function ChartIcon() {
 export default function App() {
   const [curFY, setCurFY]       = useState('FY26');
   const [curTab, setCurTab]     = useState(0);
+  const [plSub, setPlSub]       = useState(0); // P&L Statement sub-tab, 0 = Monthly P&L (default)
   const [moreSub, setMoreSub]   = useState(0); // More Details sub-tab, 0 = Solar Parks (default)
   const [loading, setLoading]   = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -100,17 +124,23 @@ export default function App() {
       ? `Refreshed ${lastRefresh.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
       : 'Refresh Live Data';
 
+  const onComparison = curTab === PL_TAB && plSub === PL_COMPARISON;
+
   const handleDownload = () => {
-    if (curTab === 3) {
+    if (onComparison) {
       downloadComparisonSheet(cmpOption);
     } else {
       downloadFYSheet(curFY, fyLabel, revD.data, expD.data, revD.visMo);
     }
   };
 
-  const downloadLabel = curTab === 3
+  const downloadLabel = onComparison
     ? 'Download Comparisons Sheet'
     : `Download ${fyLabel} Sheet`;
+
+  // The FY selector, Download and Refresh only mean something on the P&L views and on Financial Metrics.
+  // Every other tab either has its own refresh/edit buttons or is not about a financial year.
+  const showFyControls = curTab === PL_TAB || curTab === FINANCIAL_METRICS_TAB;
 
   return (
     <div className="app">
@@ -123,7 +153,7 @@ export default function App() {
               <span className="app-sub">Rays Power Experts</span>
             </div>
           </div>
-          {curTab !== FP_TAB && <div className="header-center">
+          {showFyControls && <div className="header-center">
             <div className="fy-seg">
               {FY_CONFIG.map(f => (
                 <button key={f.id} className={`fy-btn${curFY === f.id ? ' active' : ''}`}
@@ -151,13 +181,11 @@ export default function App() {
           ))}
         </nav>
 
+        {curTab === PL_TAB && (
+          <SubNav label="P&L Statement sections" items={PL_SUBTABS} active={plSub} onPick={setPlSub} />
+        )}
         {curTab === MORE_DETAILS_TAB && (
-          <nav className="subtab-nav" aria-label="More Details sections">
-            {MORE_SUBTABS.map((t, i) => (
-              <button key={t} className={`subtab-btn${moreSub === i ? ' active' : ''}`}
-                onClick={() => setMoreSub(i)}>{t}</button>
-            ))}
-          </nav>
+          <SubNav label="More Details sections" items={MORE_SUBTABS} active={moreSub} onPick={setMoreSub} />
         )}
       </div>
 
@@ -166,13 +194,13 @@ export default function App() {
       )}
 
       <main className="app-main">
-        {curTab === 0 && <MonthlyPL revData={revD.data} expData={expD.data} visMo={revD.visMo} />}
-        {curTab === 1 && <FinTable structure={REV_STRUCTURE} data={revD.data} visMo={revD.visMo} chartTitle="Revenue" chartColor="#3b82f6" />}
-        {curTab === 2 && <FinTable structure={EXP_STRUCTURE} data={expD.data} visMo={expD.visMo} chartTitle="Expenses" chartColor="#ef4444" />}
-        {curTab === 3 && <Comparison selOption={cmpOption} setSelOption={setCmpOption} />}
-        {curTab === 4 && <InvestorSummary curFY={curFY} />}
-        {curTab === 5 && <Outlook curFY={curFY} />}
-        {curTab === 6 && <NPD />}
+        {curTab === PL_TAB && plSub === 0 && <MonthlyPL revData={revD.data} expData={expD.data} visMo={revD.visMo} />}
+        {curTab === PL_TAB && plSub === 1 && <FinTable structure={REV_STRUCTURE} data={revD.data} visMo={revD.visMo} chartTitle="Revenue" chartColor="#3b82f6" />}
+        {curTab === PL_TAB && plSub === 2 && <FinTable structure={EXP_STRUCTURE} data={expD.data} visMo={expD.visMo} chartTitle="Expenses" chartColor="#ef4444" />}
+        {curTab === PL_TAB && plSub === PL_COMPARISON && <Comparison selOption={cmpOption} setSelOption={setCmpOption} />}
+        {curTab === FINANCIAL_METRICS_TAB && <InvestorSummary curFY={curFY} />}
+        {curTab === OB_TAB && <Outlook />}
+        {curTab === NPD_TAB && <NPD />}
         {curTab === MORE_DETAILS_TAB && moreSub === 0 && <SolarParks />}
         {curTab === MORE_DETAILS_TAB && moreSub === 1 && <Manufacturing />}
         {curTab === MORE_DETAILS_TAB && moreSub === 2 && <UKArin />}
@@ -181,6 +209,8 @@ export default function App() {
             <FinancialProjections />
           </Suspense>
         )}
+        {curTab === CHALLENGES_TAB && <Challenges />}
+        {curTab === MITIGANTS_TAB && <Mitigants />}
       </main>
 
       <footer className="app-footer">

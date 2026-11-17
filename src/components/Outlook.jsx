@@ -8,7 +8,7 @@ import { GenericBarChart } from './Charts.jsx';
 import { downloadOrderBookSheet } from '../orderBookExport.js';
 import { getObMemo, loadObSaved, mergeIntoObMemo, isFresh } from '../data/savedTabData.js';
 
-export default function Outlook({ curFY }) {
+export default function Outlook() {
   const [editMode, setEditMode] = useState(false);
   const [inv, setInv] = useState(DEFAULTS);
   useEffect(() => { loadInvestorData().then(setInv); }, []);
@@ -133,8 +133,10 @@ export default function Outlook({ curFY }) {
     setObRefreshing(false);
   }
 
-  const revD = getRevData(curFY);
-  const expD = getExpData(curFY);
+  // The guidance targets are FY27 targets, so the progress bars always show FY27 - the FY selector
+  // at the top of the dashboard is not shown on this tab and must not change what they compare.
+  const revD = getRevData('FY27');
+  const expD = getExpData('FY27');
   const allIdxs = Array.from({ length: 12 }, (_, i) => i);
   const ytd = computeTotals(revD.data, expD.data, Object.keys(revD.data), Object.keys(expD.data), allIdxs);
 
@@ -226,9 +228,7 @@ export default function Outlook({ curFY }) {
   });
 
   // Live Order Book — Revenue row. "Current yr" here means FY27 specifically
-  // (the actual current fiscal year), fixed — not whichever FY tab happens
-  // to be toggled at the top of the dashboard, unlike ytd/epcProgressPct
-  // above which do follow curFY for the Guidance section.
+  // (the actual current fiscal year), fixed - like the Guidance section above.
   const revD27 = getRevData('FY27');
   const expD27 = getExpData('FY27');
   const ytd27 = computeTotals(revD27.data, expD27.data, Object.keys(revD27.data), Object.keys(expD27.data), allIdxs);
@@ -465,7 +465,7 @@ export default function Outlook({ curFY }) {
 
       {/* FY Guidance Progress */}
       <div className="chart-card">
-        <div className="chart-card-title">FY Guidance — Progress</div>
+        <div className="chart-card-title">FY27 Guidance — Progress</div>
         <div className="guidance-row">
           <div className="guidance-label">
             EPC Revenue Target: {editMode
